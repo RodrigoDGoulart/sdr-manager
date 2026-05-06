@@ -40,6 +40,31 @@ export interface Workspace {
   updatedAt: string;
 }
 
+export type LeadFieldType = 'text' | 'long_text' | 'number' | 'date';
+
+export interface LeadCustomField {
+  label: string;
+  type: LeadFieldType;
+  value: string;
+}
+
+export interface Lead {
+  id: string;
+  workspaceId: string;
+  name: string;
+  email: string;
+  phone: string;
+  company: string;
+  role: string;
+  source: string;
+  notes: string;
+  customFields: LeadCustomField[];
+  createdAt: string;
+}
+
+export type CreateLeadPayload = Omit<Lead, 'id' | 'workspaceId' | 'createdAt'>;
+export type UpdateLeadPayload = CreateLeadPayload;
+
 interface SupabaseAuthResponse {
   access_token: string;
   user: {
@@ -57,6 +82,24 @@ interface SupabaseWorkspace {
 
 interface SupabaseWorkspaceListResponse {
   workspaces: SupabaseWorkspace[];
+}
+
+interface SupabaseLead {
+  id: string;
+  workspace_id: string;
+  name: string;
+  email: string;
+  phone: string;
+  company: string;
+  role: string;
+  source: string;
+  notes: string;
+  custom_fields: LeadCustomField[];
+  created_at: string;
+}
+
+interface SupabaseLeadListResponse {
+  leads: SupabaseLead[];
 }
 
 interface OkResponse {
@@ -78,6 +121,35 @@ function mapWorkspace(data: SupabaseWorkspace): Workspace {
     userId: data.owner_id,
     createdAt: data.created_at,
     updatedAt: data.created_at,
+  };
+}
+
+function mapLead(data: SupabaseLead): Lead {
+  return {
+    id: data.id,
+    workspaceId: data.workspace_id,
+    name: data.name,
+    email: data.email,
+    phone: data.phone,
+    company: data.company,
+    role: data.role,
+    source: data.source,
+    notes: data.notes,
+    customFields: data.custom_fields || [],
+    createdAt: data.created_at,
+  };
+}
+
+function mapCreateLeadPayload(data: CreateLeadPayload) {
+  return {
+    name: data.name,
+    email: data.email,
+    phone: data.phone,
+    company: data.company,
+    role: data.role,
+    source: data.source,
+    notes: data.notes,
+    customFields: data.customFields,
   };
 }
 
@@ -122,6 +194,25 @@ export const workspaceService = {
       .then((res) => ({ ...res, data: mapWorkspace(res.data) })),
 
   remove: (id: string) => api.delete(`/workspace/${id}`),
+};
+
+export const leadService = {
+  list: (workspaceId: string) =>
+    api
+      .get<SupabaseLeadListResponse>(`/workspace/${workspaceId}/leads`)
+      .then((res) => ({ ...res, data: res.data.leads.map(mapLead) })),
+
+  create: (workspaceId: string, data: CreateLeadPayload) =>
+    api
+      .post<SupabaseLead>(`/workspace/${workspaceId}/leads`, mapCreateLeadPayload(data))
+      .then((res) => ({ ...res, data: mapLead(res.data) })),
+
+  update: (workspaceId: string, leadId: string, data: UpdateLeadPayload) =>
+    api
+      .put<SupabaseLead>(`/workspace/${workspaceId}/leads/${leadId}`, mapCreateLeadPayload(data))
+      .then((res) => ({ ...res, data: mapLead(res.data) })),
+
+  remove: (workspaceId: string, leadId: string) => api.delete<OkResponse>(`/workspace/${workspaceId}/leads/${leadId}`),
 };
 
 export default api;

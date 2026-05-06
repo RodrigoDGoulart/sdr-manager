@@ -42,6 +42,27 @@ const workspaceSchema = z.object({
   name: z.string().trim().min(1),
 });
 
+const leadFieldTypeSchema = z.enum(['text', 'long_text', 'number', 'date']);
+
+const customLeadFieldSchema = z.object({
+  label: z.string().trim().min(1),
+  type: leadFieldTypeSchema,
+  value: z.union([z.string(), z.number()]).transform((value) => String(value).trim()).refine((value) => value.length > 0, {
+    message: 'Custom field value is required',
+  }),
+});
+
+const leadSchema = z.object({
+  name: z.string().trim().min(1),
+  email: z.string().trim().min(1),
+  phone: z.string().trim().min(1),
+  company: z.string().trim().min(1),
+  role: z.string().trim().min(1),
+  source: z.string().trim().min(1),
+  notes: z.string().trim().min(1),
+  customFields: z.array(customLeadFieldSchema).default([]),
+});
+
 function env(name: string) {
   const value = Deno.env.get(name);
   if (!value) throw new Error(`Missing ${name}`);
@@ -326,6 +347,111 @@ Deno.serve(async (req) => {
             .eq('id', targetId);
 
           if (error) return jsonResponse({ error: error.message }, 400);
+
+          return jsonResponse({ ok: true });
+        }
+      }
+
+      if (resource === 'workspace' && parts.length === 3 && parts[2] === 'leads') {
+        const workspaceId = subresource;
+
+        const { data: workspace, error: workspaceError } = await supabase
+          .from('workspaces')
+          .select('id')
+          .eq('id', workspaceId)
+          .eq('owner_id', authUserId)
+          .maybeSingle();
+
+        if (workspaceError) return jsonResponse({ error: workspaceError.message }, 400);
+        if (!workspace) return jsonResponse({ error: 'Workspace não encontrado' }, 404);
+
+        if (req.method === 'GET') {
+          const { data, error } = await supabase
+            .from('leads')
+            .select('id,workspace_id,name,email,phone,company,role,source,notes,custom_fields,created_at')
+            .eq('workspace_id', workspaceId)
+            .order('created_at', { ascending: false });
+
+          if (error) return jsonResponse({ error: error.message }, 400);
+
+          return jsonResponse({ leads: data });
+        }
+
+        if (req.method === 'POST') {
+          const lead = leadSchema.parse(await readJson(req));
+          const { data, error } = await supabase
+            .from('leads')
+            .insert({
+              workspace_id: workspaceId,
+              name: lead.name,
+              email: lead.email,
+              phone: lead.phone,
+              company: lead.company,
+              role: lead.role,
+              source: lead.source,
+              notes: lead.notes,
+              custom_fields: lead.customFields,
+            })
+            .select('id,workspace_id,name,email,phone,company,role,source,notes,custom_fields,created_at')
+            .single();
+
+          if (error) return jsonResponse({ error: error.message }, 400);
+
+          return jsonResponse(data, 201);
+        }
+      }
+
+      if (resource === 'workspace' && parts.length === 4 && parts[2] === 'leads') {
+        const workspaceId = subresource;
+        const leadId = parts[3];
+        const adminClient = createAdminClient();
+
+        const { data: workspace, error: workspaceError } = await supabase
+          .from('workspaces')
+          .select('id')
+          .eq('id', workspaceId)
+          .eq('owner_id', authUserId)
+          .maybeSingle();
+
+        if (workspaceError) return jsonResponse({ error: workspaceError.message }, 400);
+        if (!workspace) return jsonResponse({ error: 'Workspace não encontrado' }, 404);
+
+        if (req.method === 'PUT') {
+          const lead = leadSchema.parse(await readJson(req));
+          const { data, error } = await adminClient
+            .from('leads')
+            .update({
+              name: lead.name,
+              email: lead.email,
+              phone: lead.phone,
+              company: lead.company,
+              role: lead.role,
+              source: lead.source,
+              notes: lead.notes,
+              custom_fields: lead.customFields,
+            })
+            .eq('id', leadId)
+            .eq('workspace_id', workspaceId)
+            .select('id,workspace_id,name,email,phone,company,role,source,notes,custom_fields,created_at')
+            .maybeSingle();
+
+          if (error) return jsonResponse({ error: error.message }, 400);
+          if (!data) return jsonResponse({ error: 'Lead não encontrado' }, 404);
+
+          return jsonResponse(data);
+        }
+
+        if (req.method === 'DELETE') {
+          const { data, error } = await adminClient
+            .from('leads')
+            .delete()
+            .eq('id', leadId)
+            .eq('workspace_id', workspaceId)
+            .select('id')
+            .maybeSingle();
+
+          if (error) return jsonResponse({ error: error.message }, 400);
+          if (!data) return jsonResponse({ error: 'Lead não encontrado' }, 404);
 
           return jsonResponse({ ok: true });
         }

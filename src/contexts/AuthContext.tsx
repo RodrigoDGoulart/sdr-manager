@@ -1,13 +1,14 @@
-import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import React, { useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { AuthContext } from './authContextValue';
 
-interface AuthUser {
+export interface AuthUser {
   id: string;
   name: string;
   email: string;
 }
 
-interface AuthContextType {
+export interface AuthContextType {
   user: AuthUser | null;
   token: string | null;
   login: (token: string, name: string, email: string) => void;
@@ -15,67 +16,97 @@ interface AuthContextType {
   updateUser: (name: string, email: string) => void;
 }
 
-const AuthContext = createContext<AuthContextType | null>(null);
+const AUTH_STORAGE_KEYS = {
+  token: 'token',
+  name: 'userName',
+  email: 'userEmail',
+} as const;
 
-function parseJwt(token: string): { userId: string } | null {
+interface JwtPayload {
+  userId: string;
+  exp?: number;
+}
+
+interface StoredAuth {
+  token: string;
+  user: AuthUser;
+}
+
+function removeStoredAuth() {
+  localStorage.removeItem(AUTH_STORAGE_KEYS.token);
+  localStorage.removeItem(AUTH_STORAGE_KEYS.name);
+  localStorage.removeItem(AUTH_STORAGE_KEYS.email);
+}
+
+function parseJwt(token: string): JwtPayload | null {
   try {
     const base64Url = token.split('.')[1];
+    if (!base64Url) return null;
+
     const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
     const paddedBase64 = base64.padEnd(base64.length + ((4 - base64.length % 4) % 4), '=');
     const payload = JSON.parse(atob(paddedBase64));
     const userId = payload.sub || payload.userId;
 
-    return typeof userId === 'string' ? { userId } : null;
+    if (typeof userId !== 'string') return null;
+    if (typeof payload.exp === 'number' && payload.exp * 1000 <= Date.now()) return null;
+
+    return {
+      userId,
+      exp: typeof payload.exp === 'number' ? payload.exp : undefined,
+    };
   } catch {
     return null;
   }
 }
 
+function getStoredAuth(): StoredAuth | null {
+  const storedToken = localStorage.getItem(AUTH_STORAGE_KEYS.token);
+  const storedName = localStorage.getItem(AUTH_STORAGE_KEYS.name);
+  const storedEmail = localStorage.getItem(AUTH_STORAGE_KEYS.email);
+
+  if (!storedToken || !storedName || !storedEmail) return null;
+
+  const payload = parseJwt(storedToken);
+  if (!payload) {
+    removeStoredAuth();
+    return null;
+  }
+
+  return {
+    token: storedToken,
+    user: { id: payload.userId, name: storedName, email: storedEmail },
+  };
+}
+
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const navigate = useNavigate();
-  const [user, setUser] = useState<AuthUser | null>(null);
-  const [token, setToken] = useState<string | null>(null);
-
-  useEffect(() => {
-    const storedToken = localStorage.getItem('token');
-    const storedName = localStorage.getItem('userName');
-    const storedEmail = localStorage.getItem('userEmail');
-
-    if (storedToken && storedName && storedEmail) {
-      const payload = parseJwt(storedToken);
-      if (payload) {
-        setToken(storedToken);
-        setUser({ id: payload.userId, name: storedName, email: storedEmail });
-      } else {
-        localStorage.clear();
-      }
-    }
-  }, []);
+  const [storedAuth] = useState<StoredAuth | null>(() => getStoredAuth());
+  const [user, setUser] = useState<AuthUser | null>(() => storedAuth?.user ?? null);
+  const [token, setToken] = useState<string | null>(() => storedAuth?.token ?? null);
 
   const login = useCallback((newToken: string, name: string, email: string) => {
     const payload = parseJwt(newToken);
     if (!payload) return;
 
-    localStorage.setItem('token', newToken);
-    localStorage.setItem('userName', name);
-    localStorage.setItem('userEmail', email);
+    localStorage.setItem(AUTH_STORAGE_KEYS.token, newToken);
+    localStorage.setItem(AUTH_STORAGE_KEYS.name, name);
+    localStorage.setItem(AUTH_STORAGE_KEYS.email, email);
 
     setToken(newToken);
     setUser({ id: payload.userId, name, email });
   }, []);
 
   const logout = useCallback(() => {
-    localStorage.removeItem('token');
-    localStorage.removeItem('userName');
-    localStorage.removeItem('userEmail');
+    removeStoredAuth();
     setToken(null);
     setUser(null);
     navigate('/login');
   }, [navigate]);
 
   const updateUser = useCallback((name: string, email: string) => {
-    localStorage.setItem('userName', name);
-    localStorage.setItem('userEmail', email);
+    localStorage.setItem(AUTH_STORAGE_KEYS.name, name);
+    localStorage.setItem(AUTH_STORAGE_KEYS.email, email);
     setUser((prev) => prev ? { ...prev, name, email } : null);
   }, []);
 
@@ -84,10 +115,4 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       {children}
     </AuthContext.Provider>
   );
-}
-
-export function useAuth() {
-  const ctx = useContext(AuthContext);
-  if (!ctx) throw new Error('useAuth must be used within AuthProvider');
-  return ctx;
 }

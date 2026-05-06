@@ -12,7 +12,7 @@ import {
 import { useNavigate } from 'react-router-dom';
 import Sidebar from '../components/Sidebar';
 import { workspaceService } from '../services/api';
-import { useWorkspaces } from '../contexts/WorkspaceContext';
+import { useWorkspaces } from '../contexts/useWorkspaces';
 import type { AxiosError } from 'axios';
 
 interface ApiError {

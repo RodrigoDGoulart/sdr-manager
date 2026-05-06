@@ -23,8 +23,8 @@ import LogoutIcon from '@mui/icons-material/Logout';
 import AddIcon from '@mui/icons-material/Add';
 import AccountCircleIcon from '@mui/icons-material/AccountCircle';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { useAuth } from '../contexts/AuthContext';
-import { useWorkspaces } from '../contexts/WorkspaceContext';
+import { useAuth } from '../contexts/useAuth';
+import { useWorkspaces } from '../contexts/useWorkspaces';
 import { userService, workspaceService } from '../services/api';
 import type { AxiosError } from 'axios';
 

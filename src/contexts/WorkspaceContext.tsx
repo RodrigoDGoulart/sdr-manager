@@ -1,8 +1,9 @@
-import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { workspaceService, type Workspace } from '../services/api';
-import { useAuth } from './AuthContext';
+import { useAuth } from './useAuth';
+import { WorkspaceContext } from './workspaceContextValue';
 
-interface WorkspaceContextType {
+export interface WorkspaceContextType {
   workspaces: Workspace[];
   loading: boolean;
   refresh: () => Promise<void>;
@@ -10,8 +11,6 @@ interface WorkspaceContextType {
   removeWorkspace: (id: string) => void;
   updateWorkspace: (ws: Workspace) => void;
 }
-
-const WorkspaceContext = createContext<WorkspaceContextType | null>(null);
 
 export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
   const { token } = useAuth();
@@ -52,10 +51,4 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
       {children}
     </WorkspaceContext.Provider>
   );
-}
-
-export function useWorkspaces() {
-  const ctx = useContext(WorkspaceContext);
-  if (!ctx) throw new Error('useWorkspaces must be used within WorkspaceProvider');
-  return ctx;
 }

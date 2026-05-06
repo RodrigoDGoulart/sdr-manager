@@ -4,6 +4,12 @@ import { createClient, type SupabaseClient } from 'npm:@supabase/supabase-js@2';
 import { z } from 'npm:zod@^4.1.12';
 
 type Json = Record<string, unknown>;
+type AuthUpdatePayload = {
+  email?: string;
+  user_metadata?: {
+    name: string;
+  };
+};
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -218,19 +224,23 @@ Deno.serve(async (req) => {
         if (req.method === 'PUT') {
           const patch = updateUserSchema.parse(await readJson(req));
           const updatePayload: Json = {};
+          const authUpdatePayload: AuthUpdatePayload = {};
 
           if (patch.name) updatePayload.name = patch.name;
-          if (patch.email) updatePayload.email = patch.email;
-
           if (patch.email) {
-            const { error } = await supabase.auth.updateUser({ email: patch.email });
-            if (error) return jsonResponse({ error: error.message }, 400);
+            updatePayload.email = patch.email;
+            authUpdatePayload.email = patch.email;
           }
 
           if (patch.name) {
-            const { error } = await supabase.auth.updateUser({
-              data: { name: patch.name },
-            });
+            authUpdatePayload.user_metadata = { name: patch.name };
+          }
+
+          if (Object.keys(authUpdatePayload).length > 0) {
+            const { error } = await createAdminClient().auth.admin.updateUserById(
+              targetId,
+              authUpdatePayload,
+            );
 
             if (error) return jsonResponse({ error: error.message }, 400);
           }

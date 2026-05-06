@@ -71,6 +71,7 @@ const customLeadFieldSchema = z.object({
 });
 
 const leadSchema = z.object({
+  funnelId: z.uuid().optional(),
   name: z.string().trim().min(1),
   email: z.string().trim().min(1),
   phone: z.string().trim().min(1),
@@ -529,22 +530,26 @@ Deno.serve(async (req) => {
 
         if (req.method === 'POST') {
           const lead = leadSchema.parse(await readJson(req));
-          const { data: baseFunnel, error: baseFunnelError } = await supabase
+          const funnelQuery = supabase
             .from('funnels')
             .select('id')
-            .eq('workspace_id', workspaceId)
-            .order('sort_order', { ascending: true })
-            .limit(1)
+            .eq('workspace_id', workspaceId);
+
+          const { data: targetFunnel, error: targetFunnelError } = await (
+            lead.funnelId
+              ? funnelQuery.eq('id', lead.funnelId)
+              : funnelQuery.order('sort_order', { ascending: true }).limit(1)
+          )
             .maybeSingle();
 
-          if (baseFunnelError) return jsonResponse({ error: baseFunnelError.message }, 400);
-          if (!baseFunnel) return jsonResponse({ error: 'Funil base não encontrado' }, 404);
+          if (targetFunnelError) return jsonResponse({ error: targetFunnelError.message }, 400);
+          if (!targetFunnel) return jsonResponse({ error: 'Funil não encontrado' }, 404);
 
           const { data, error } = await supabase
             .from('leads')
             .insert({
               workspace_id: workspaceId,
-              funnel_id: baseFunnel.id,
+              funnel_id: targetFunnel.id,
               name: lead.name,
               email: lead.email,
               phone: lead.phone,

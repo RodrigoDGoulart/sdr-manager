@@ -50,6 +50,7 @@ export default function WorkspacePage() {
   const [leadsLoading, setLeadsLoading] = useState(true);
   const [funnelsLoading, setFunnelsLoading] = useState(true);
   const [addLeadOpen, setAddLeadOpen] = useState(false);
+  const [addLeadFunnelId, setAddLeadFunnelId] = useState<string | null>(null);
   const [selectedLead, setSelectedLead] = useState<Lead | null>(null);
   const [editingLead, setEditingLead] = useState<Lead | null>(null);
   const [editingFunnelId, setEditingFunnelId] = useState<string | null>(null);
@@ -122,9 +123,13 @@ export default function WorkspacePage() {
     setCreateLeadError("");
 
     try {
-      const res = await leadService.create(id, payload);
+      const res = await leadService.create(id, {
+        ...payload,
+        funnelId: addLeadFunnelId || undefined,
+      });
       setLeads((current) => [res.data, ...current]);
       setAddLeadOpen(false);
+      setAddLeadFunnelId(null);
       showSuccess("Lead cadastrado com sucesso.");
     } catch (err) {
       const axiosErr = err as AxiosError<ApiError>;
@@ -135,6 +140,12 @@ export default function WorkspacePage() {
     } finally {
       setCreateLeadLoading(false);
     }
+  }
+
+  function openAddLeadDialog(funnelId: string) {
+    setCreateLeadError("");
+    setAddLeadFunnelId(funnelId);
+    setAddLeadOpen(true);
   }
 
   async function handleUpdateLead(payload: CreateLeadPayload) {
@@ -416,13 +427,6 @@ export default function WorkspacePage() {
                   Organize os leads pelo funil deste workspace
                 </Typography>
               </Box>
-              <Button
-                variant="contained"
-                startIcon={<AddIcon />}
-                onClick={() => setAddLeadOpen(true)}
-              >
-                Adicionar Lead
-              </Button>
             </Box>
 
             {leadsLoading || funnelsLoading ? (
@@ -620,6 +624,22 @@ export default function WorkspacePage() {
                             </CardActionArea>
                           </Card>
                         ))}
+                        <Button
+                          variant="text"
+                          onClick={() => openAddLeadDialog(funnel.id)}
+                          sx={{
+                            alignSelf: "flex-start",
+                            color: "text.secondary",
+                            fontWeight: 500,
+                            justifyContent: "flex-start",
+                            minWidth: 0,
+                            px: 0.5,
+                            py: 0.25,
+                            textTransform: "none",
+                          }}
+                        >
+                          + Adicionar Lead
+                        </Button>
                       </Stack>
                     </Box>
                   );
@@ -696,6 +716,7 @@ export default function WorkspacePage() {
             setEditingLead(null);
           } else {
             setAddLeadOpen(false);
+            setAddLeadFunnelId(null);
           }
         }}
         onSubmit={editingLead ? handleUpdateLead : handleCreateLead}

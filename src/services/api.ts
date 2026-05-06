@@ -71,7 +71,9 @@ export interface Funnel {
   createdAt: string;
 }
 
-export type CreateLeadPayload = Omit<Lead, 'id' | 'workspaceId' | 'funnelId' | 'createdAt'>;
+export type CreateLeadPayload = Omit<Lead, 'id' | 'workspaceId' | 'funnelId' | 'createdAt'> & {
+  funnelId?: string;
+};
 export type UpdateLeadPayload = CreateLeadPayload;
 
 interface SupabaseAuthResponse {
@@ -175,6 +177,7 @@ function mapFunnel(data: SupabaseFunnel): Funnel {
 
 function mapCreateLeadPayload(data: CreateLeadPayload) {
   return {
+    funnelId: data.funnelId,
     name: data.name,
     email: data.email,
     phone: data.phone,

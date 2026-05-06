@@ -22,6 +22,8 @@ import MoreHorizIcon from '@mui/icons-material/MoreHoriz';
 import LogoutIcon from '@mui/icons-material/Logout';
 import AddIcon from '@mui/icons-material/Add';
 import AccountCircleIcon from '@mui/icons-material/AccountCircle';
+import PeopleAltIcon from '@mui/icons-material/PeopleAlt';
+import CampaignIcon from '@mui/icons-material/Campaign';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/useAuth';
 import { useWorkspaces } from '../contexts/useWorkspaces';
@@ -147,7 +149,7 @@ export default function Sidebar() {
       await workspaceService.remove(activeWsId!);
       removeWorkspace(activeWsId!);
       setDeleteWsOpen(false);
-      if (location.pathname === `/workspace/${activeWsId}`) {
+      if (location.pathname === `/workspace/${activeWsId}` || location.pathname === `/workspace/${activeWsId}/campaigns`) {
         navigate('/');
       }
     } catch {
@@ -230,33 +232,79 @@ export default function Sidebar() {
           </ListItemButton>
 
           {workspaces.map((ws) => {
-            const isActive = location.pathname === `/workspace/${ws.id}`;
+            const leadsPath = `/workspace/${ws.id}`;
+            const campaignsPath = `/workspace/${ws.id}/campaigns`;
+            const isLeadsActive = location.pathname === leadsPath;
+            const isCampaignsActive = location.pathname === campaignsPath;
+            const isActive = isLeadsActive || isCampaignsActive;
             return (
-              <ListItemButton
-                key={ws.id}
-                onClick={() => navigate(`/workspace/${ws.id}`)}
-                selected={isActive}
-                sx={{
-                  borderRadius: 1,
-                  py: 0.5,
-                  color: 'primary.contrastText',
-                  '&:hover': { bgcolor: 'rgba(255,255,255,0.1)' },
-                  '&.Mui-selected': { bgcolor: 'rgba(255,255,255,0.15)', '&:hover': { bgcolor: 'rgba(255,255,255,0.2)' } },
-                  pr: 0.5,
-                }}
-              >
-                <ListItemText
-                  primary={ws.name}
-                  slotProps={{ primary: { variant: 'body2', fontWeight: isActive ? 600 : 400, sx: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } } }}
-                />
-                <IconButton
-                  size="small"
-                  onClick={(e) => openWsMenu(e, ws.id)}
-                  sx={{ color: 'primary.contrastText', opacity: 0.6, '&:hover': { opacity: 1 }, ml: 0.5 }}
+              <Box key={ws.id}>
+                <ListItemButton
+                  onClick={() => navigate(leadsPath)}
+                  selected={isActive}
+                  sx={{
+                    borderRadius: 1,
+                    py: 0.5,
+                    color: 'primary.contrastText',
+                    '&:hover': { bgcolor: 'rgba(255,255,255,0.1)' },
+                    '&.Mui-selected': { bgcolor: 'rgba(255,255,255,0.15)', '&:hover': { bgcolor: 'rgba(255,255,255,0.2)' } },
+                    pr: 0.5,
+                  }}
                 >
-                  <MoreHorizIcon sx={{ fontSize: 16 }} />
-                </IconButton>
-              </ListItemButton>
+                  <ListItemText
+                    primary={ws.name}
+                    slotProps={{ primary: { variant: 'body2', fontWeight: isActive ? 600 : 400, sx: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } } }}
+                  />
+                  <IconButton
+                    size="small"
+                    onClick={(e) => openWsMenu(e, ws.id)}
+                    sx={{ color: 'primary.contrastText', opacity: 0.6, '&:hover': { opacity: 1 }, ml: 0.5 }}
+                  >
+                    <MoreHorizIcon sx={{ fontSize: 16 }} />
+                  </IconButton>
+                </ListItemButton>
+
+                {isActive && (
+                  <Box sx={{ pl: 1.5, py: 0.25 }}>
+                    <ListItemButton
+                      onClick={() => navigate(leadsPath)}
+                      selected={isLeadsActive}
+                      sx={{
+                        borderRadius: 1,
+                        py: 0.35,
+                        color: 'primary.contrastText',
+                        opacity: 0.9,
+                        '&:hover': { bgcolor: 'rgba(255,255,255,0.1)' },
+                        '&.Mui-selected': { bgcolor: 'rgba(255,255,255,0.12)', '&:hover': { bgcolor: 'rgba(255,255,255,0.18)' } },
+                      }}
+                    >
+                      <PeopleAltIcon sx={{ fontSize: 15, mr: 1, opacity: 0.75 }} />
+                      <ListItemText
+                        primary="Leads"
+                        slotProps={{ primary: { variant: 'body2', fontWeight: isLeadsActive ? 600 : 400 } }}
+                      />
+                    </ListItemButton>
+                    <ListItemButton
+                      onClick={() => navigate(campaignsPath)}
+                      selected={isCampaignsActive}
+                      sx={{
+                        borderRadius: 1,
+                        py: 0.35,
+                        color: 'primary.contrastText',
+                        opacity: 0.9,
+                        '&:hover': { bgcolor: 'rgba(255,255,255,0.1)' },
+                        '&.Mui-selected': { bgcolor: 'rgba(255,255,255,0.12)', '&:hover': { bgcolor: 'rgba(255,255,255,0.18)' } },
+                      }}
+                    >
+                      <CampaignIcon sx={{ fontSize: 15, mr: 1, opacity: 0.75 }} />
+                      <ListItemText
+                        primary="Campanhas"
+                        slotProps={{ primary: { variant: 'body2', fontWeight: isCampaignsActive ? 600 : 400 } }}
+                      />
+                    </ListItemButton>
+                  </Box>
+                )}
+              </Box>
             );
           })}
         </List>

@@ -9,6 +9,7 @@ import LoginPage from './pages/LoginPage';
 import RegisterPage from './pages/RegisterPage';
 import HomePage from './pages/HomePage';
 import WorkspacePage from './pages/WorkspacePage';
+import CampaignsPage from './pages/CampaignsPage';
 import CreateWorkspacePage from './pages/CreateWorkspacePage';
 
 function AppRoutes() {
@@ -39,6 +40,14 @@ function AppRoutes() {
             element={
               <ProtectedRoute>
                 <WorkspacePage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/workspace/:id/campaigns"
+            element={
+              <ProtectedRoute>
+                <CampaignsPage />
               </ProtectedRoute>
             }
           />

@@ -56,6 +56,13 @@ const funnelSchema = z.object({
   name: z.string().trim().min(1),
 });
 
+const campaignSchema = z.object({
+  name: z.string().trim().min(1),
+  context: z.string().trim().min(1),
+  generationPrompt: z.string().trim().min(1),
+  triggerFunnelId: z.union([z.uuid(), z.literal(''), z.null()]).optional().transform((value) => value || null),
+});
+
 const moveLeadSchema = z.object({
   funnelId: z.uuid(),
 });
@@ -498,6 +505,140 @@ Deno.serve(async (req) => {
 
           if (error) return jsonResponse({ error: error.message }, 400);
           if (!data) return jsonResponse({ error: 'Funil não encontrado' }, 404);
+
+          return jsonResponse({ ok: true });
+        }
+      }
+
+      if (resource === 'workspace' && parts.length === 3 && parts[2] === 'campaigns') {
+        const workspaceId = subresource;
+
+        const { data: workspace, error: workspaceError } = await supabase
+          .from('workspaces')
+          .select('id')
+          .eq('id', workspaceId)
+          .eq('owner_id', authUserId)
+          .maybeSingle();
+
+        if (workspaceError) return jsonResponse({ error: workspaceError.message }, 400);
+        if (!workspace) return jsonResponse({ error: 'Workspace nÃ£o encontrado' }, 404);
+
+        if (req.method === 'GET') {
+          const { data, error } = await supabase
+            .from('campaigns')
+            .select('id,workspace_id,trigger_funnel_id,name,context,generation_prompt,created_at,updated_at')
+            .eq('workspace_id', workspaceId)
+            .order('created_at', { ascending: false });
+
+          if (error) return jsonResponse({ error: error.message }, 400);
+
+          return jsonResponse({ campaigns: data });
+        }
+
+        if (req.method === 'POST') {
+          const campaign = campaignSchema.parse(await readJson(req));
+
+          if (campaign.triggerFunnelId) {
+            const { data: funnel, error: funnelError } = await supabase
+              .from('funnels')
+              .select('id')
+              .eq('id', campaign.triggerFunnelId)
+              .eq('workspace_id', workspaceId)
+              .maybeSingle();
+
+            if (funnelError) return jsonResponse({ error: funnelError.message }, 400);
+            if (!funnel) return jsonResponse({ error: 'Funil nÃ£o encontrado' }, 404);
+          }
+
+          const { data, error } = await supabase
+            .from('campaigns')
+            .insert({
+              workspace_id: workspaceId,
+              trigger_funnel_id: campaign.triggerFunnelId,
+              name: campaign.name,
+              context: campaign.context,
+              generation_prompt: campaign.generationPrompt,
+            })
+            .select('id,workspace_id,trigger_funnel_id,name,context,generation_prompt,created_at,updated_at')
+            .single();
+
+          if (error) return jsonResponse({ error: error.message }, 400);
+
+          return jsonResponse(data, 201);
+        }
+      }
+
+      if (resource === 'workspace' && parts.length === 4 && parts[2] === 'campaigns') {
+        const workspaceId = subresource;
+        const campaignId = parts[3];
+        const adminClient = createAdminClient();
+
+        const { data: workspace, error: workspaceError } = await supabase
+          .from('workspaces')
+          .select('id')
+          .eq('id', workspaceId)
+          .eq('owner_id', authUserId)
+          .maybeSingle();
+
+        if (workspaceError) return jsonResponse({ error: workspaceError.message }, 400);
+        if (!workspace) return jsonResponse({ error: 'Workspace nÃ£o encontrado' }, 404);
+
+        const { data: existingCampaign, error: campaignError } = await supabase
+          .from('campaigns')
+          .select('id')
+          .eq('id', campaignId)
+          .eq('workspace_id', workspaceId)
+          .maybeSingle();
+
+        if (campaignError) return jsonResponse({ error: campaignError.message }, 400);
+        if (!existingCampaign) return jsonResponse({ error: 'Campanha nÃ£o encontrada' }, 404);
+
+        if (req.method === 'PUT') {
+          const campaign = campaignSchema.parse(await readJson(req));
+
+          if (campaign.triggerFunnelId) {
+            const { data: funnel, error: funnelError } = await supabase
+              .from('funnels')
+              .select('id')
+              .eq('id', campaign.triggerFunnelId)
+              .eq('workspace_id', workspaceId)
+              .maybeSingle();
+
+            if (funnelError) return jsonResponse({ error: funnelError.message }, 400);
+            if (!funnel) return jsonResponse({ error: 'Funil nÃ£o encontrado' }, 404);
+          }
+
+          const { data, error } = await adminClient
+            .from('campaigns')
+            .update({
+              trigger_funnel_id: campaign.triggerFunnelId,
+              name: campaign.name,
+              context: campaign.context,
+              generation_prompt: campaign.generationPrompt,
+              updated_at: new Date().toISOString(),
+            })
+            .eq('id', campaignId)
+            .eq('workspace_id', workspaceId)
+            .select('id,workspace_id,trigger_funnel_id,name,context,generation_prompt,created_at,updated_at')
+            .maybeSingle();
+
+          if (error) return jsonResponse({ error: error.message }, 400);
+          if (!data) return jsonResponse({ error: 'Campanha nÃ£o encontrada' }, 404);
+
+          return jsonResponse(data);
+        }
+
+        if (req.method === 'DELETE') {
+          const { data, error } = await adminClient
+            .from('campaigns')
+            .delete()
+            .eq('id', campaignId)
+            .eq('workspace_id', workspaceId)
+            .select('id')
+            .maybeSingle();
+
+          if (error) return jsonResponse({ error: error.message }, 400);
+          if (!data) return jsonResponse({ error: 'Campanha nÃ£o encontrada' }, 404);
 
           return jsonResponse({ ok: true });
         }

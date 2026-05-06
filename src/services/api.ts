@@ -71,10 +71,23 @@ export interface Funnel {
   createdAt: string;
 }
 
+export interface Campaign {
+  id: string;
+  workspaceId: string;
+  triggerFunnelId: string | null;
+  name: string;
+  context: string;
+  generationPrompt: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export type CreateLeadPayload = Omit<Lead, 'id' | 'workspaceId' | 'funnelId' | 'createdAt'> & {
   funnelId?: string;
 };
 export type UpdateLeadPayload = CreateLeadPayload;
+export type CreateCampaignPayload = Omit<Campaign, 'id' | 'workspaceId' | 'createdAt' | 'updatedAt'>;
+export type UpdateCampaignPayload = CreateCampaignPayload;
 
 interface SupabaseAuthResponse {
   access_token: string;
@@ -126,6 +139,21 @@ interface SupabaseFunnelListResponse {
   funnels: SupabaseFunnel[];
 }
 
+interface SupabaseCampaign {
+  id: string;
+  workspace_id: string;
+  trigger_funnel_id: string | null;
+  name: string;
+  context: string;
+  generation_prompt: string;
+  created_at: string;
+  updated_at: string;
+}
+
+interface SupabaseCampaignListResponse {
+  campaigns: SupabaseCampaign[];
+}
+
 interface OkResponse {
   ok: true;
 }
@@ -175,6 +203,19 @@ function mapFunnel(data: SupabaseFunnel): Funnel {
   };
 }
 
+function mapCampaign(data: SupabaseCampaign): Campaign {
+  return {
+    id: data.id,
+    workspaceId: data.workspace_id,
+    triggerFunnelId: data.trigger_funnel_id,
+    name: data.name,
+    context: data.context,
+    generationPrompt: data.generation_prompt,
+    createdAt: data.created_at,
+    updatedAt: data.updated_at,
+  };
+}
+
 function mapCreateLeadPayload(data: CreateLeadPayload) {
   return {
     funnelId: data.funnelId,
@@ -186,6 +227,15 @@ function mapCreateLeadPayload(data: CreateLeadPayload) {
     source: data.source,
     notes: data.notes,
     customFields: data.customFields,
+  };
+}
+
+function mapCampaignPayload(data: CreateCampaignPayload) {
+  return {
+    name: data.name,
+    context: data.context,
+    generationPrompt: data.generationPrompt,
+    triggerFunnelId: data.triggerFunnelId || null,
   };
 }
 
@@ -273,6 +323,26 @@ export const funnelService = {
       .then((res) => ({ ...res, data: mapFunnel(res.data) })),
 
   remove: (workspaceId: string, funnelId: string) => api.delete<OkResponse>(`/workspace/${workspaceId}/funnels/${funnelId}`),
+};
+
+export const campaignService = {
+  list: (workspaceId: string) =>
+    api
+      .get<SupabaseCampaignListResponse>(`/workspace/${workspaceId}/campaigns`)
+      .then((res) => ({ ...res, data: res.data.campaigns.map(mapCampaign) })),
+
+  create: (workspaceId: string, data: CreateCampaignPayload) =>
+    api
+      .post<SupabaseCampaign>(`/workspace/${workspaceId}/campaigns`, mapCampaignPayload(data))
+      .then((res) => ({ ...res, data: mapCampaign(res.data) })),
+
+  update: (workspaceId: string, campaignId: string, data: UpdateCampaignPayload) =>
+    api
+      .put<SupabaseCampaign>(`/workspace/${workspaceId}/campaigns/${campaignId}`, mapCampaignPayload(data))
+      .then((res) => ({ ...res, data: mapCampaign(res.data) })),
+
+  remove: (workspaceId: string, campaignId: string) =>
+    api.delete<OkResponse>(`/workspace/${workspaceId}/campaigns/${campaignId}`),
 };
 
 export default api;

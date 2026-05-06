@@ -295,6 +295,8 @@ export default function Sidebar() {
         <DialogContent>
           <TextField
             label="Nome"
+            name="name"
+            autoComplete="name"
             value={editUserName}
             onChange={(e) => setEditUserName(e.target.value)}
             fullWidth
@@ -303,7 +305,9 @@ export default function Sidebar() {
           />
           <TextField
             label="E-mail"
+            name="email"
             type="email"
+            autoComplete="email"
             value={editUserEmail}
             onChange={(e) => setEditUserEmail(e.target.value)}
             fullWidth
@@ -353,6 +357,8 @@ export default function Sidebar() {
         <DialogContent>
           <TextField
             label="Nome"
+            name="workspace-name"
+            autoComplete="organization"
             value={editWsName}
             onChange={(e) => setEditWsName(e.target.value)}
             fullWidth

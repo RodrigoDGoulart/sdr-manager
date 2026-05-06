@@ -89,7 +89,9 @@ export default function LoginPage() {
           <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
             <TextField
               label="E-mail"
+              name="email"
               type="email"
+              autoComplete="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               fullWidth
@@ -97,7 +99,9 @@ export default function LoginPage() {
             />
             <TextField
               label="Senha"
+              name="password"
               type={showPassword ? 'text' : 'password'}
+              autoComplete="current-password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               fullWidth
@@ -109,6 +113,7 @@ export default function LoginPage() {
                       edge="end"
                       size="small"
                       tabIndex={-1}
+                      aria-label={showPassword ? 'Ocultar senha' : 'Mostrar senha'}
                     >
                       {showPassword ? <VisibilityOff /> : <Visibility />}
                     </IconButton>

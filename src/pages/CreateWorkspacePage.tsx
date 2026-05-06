@@ -6,6 +6,8 @@ import {
   TextField,
   Button,
   CircularProgress,
+  Snackbar,
+  Alert,
 } from '@mui/material';
 import { useNavigate } from 'react-router-dom';
 import Sidebar from '../components/Sidebar';
@@ -23,6 +25,7 @@ export default function CreateWorkspacePage() {
 
   const [name, setName] = useState('');
   const [error, setError] = useState('');
+  const [successOpen, setSuccessOpen] = useState(false);
   const [loading, setLoading] = useState(false);
 
   async function handleCreate() {
@@ -35,7 +38,8 @@ export default function CreateWorkspacePage() {
     try {
       const res = await workspaceService.create(name.trim());
       addWorkspace(res.data);
-      navigate(`/workspace/${res.data.id}`);
+      setSuccessOpen(true);
+      setTimeout(() => navigate(`/workspace/${res.data.id}`), 900);
     } catch (err) {
       const axiosErr = err as AxiosError<ApiError>;
       setError(axiosErr.response?.data?.error || 'Erro ao criar workspace');
@@ -77,6 +81,8 @@ export default function CreateWorkspacePage() {
           <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
             <TextField
               label="Nome do workspace"
+              name="workspace-name"
+              autoComplete="organization"
               value={name}
               onChange={(e) => setName(e.target.value)}
               fullWidth
@@ -102,6 +108,16 @@ export default function CreateWorkspacePage() {
             )}
           </Box>
         </Paper>
+        <Snackbar
+          open={successOpen}
+          autoHideDuration={2500}
+          onClose={() => setSuccessOpen(false)}
+          anchorOrigin={{ vertical: 'top', horizontal: 'right' }}
+        >
+          <Alert severity="success" variant="filled" onClose={() => setSuccessOpen(false)}>
+            Workspace criado com sucesso
+          </Alert>
+        </Snackbar>
       </Box>
     </Box>
   );

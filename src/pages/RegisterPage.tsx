@@ -8,6 +8,8 @@ import {
   CircularProgress,
   InputAdornment,
   IconButton,
+  Snackbar,
+  Alert,
 } from '@mui/material';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import Visibility from '@mui/icons-material/Visibility';
@@ -30,6 +32,7 @@ export default function RegisterPage() {
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
+  const [successOpen, setSuccessOpen] = useState(false);
   const [loading, setLoading] = useState(false);
 
   async function handleRegister() {
@@ -37,12 +40,17 @@ export default function RegisterPage() {
       setError('Todos os campos são obrigatórios');
       return;
     }
+    if (password.length < 6) {
+      setError('A senha deve ter pelo menos 6 caracteres');
+      return;
+    }
     setLoading(true);
     setError('');
     try {
       const res = await userService.register(name.trim(), email.trim(), password);
       login(res.data.token, res.data.name, res.data.email);
-      navigate('/');
+      setSuccessOpen(true);
+      setTimeout(() => navigate('/'), 900);
     } catch (err) {
       const axiosErr = err as AxiosError<ApiError>;
       setError(axiosErr.response?.data?.error || 'Erro ao criar conta');
@@ -98,6 +106,8 @@ export default function RegisterPage() {
           <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
             <TextField
               label="Nome"
+              name="name"
+              autoComplete="name"
               value={name}
               onChange={(e) => setName(e.target.value)}
               fullWidth
@@ -105,14 +115,18 @@ export default function RegisterPage() {
             />
             <TextField
               label="E-mail"
+              name="email"
               type="email"
+              autoComplete="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               fullWidth
             />
             <TextField
               label="Senha"
+              name="new-password"
               type={showPassword ? 'text' : 'password'}
+              autoComplete="new-password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               fullWidth
@@ -124,6 +138,7 @@ export default function RegisterPage() {
                       edge="end"
                       size="small"
                       tabIndex={-1}
+                      aria-label={showPassword ? 'Ocultar senha' : 'Mostrar senha'}
                     >
                       {showPassword ? <VisibilityOff /> : <Visibility />}
                     </IconButton>
@@ -151,6 +166,16 @@ export default function RegisterPage() {
           </Box>
         </form>
       </Paper>
+      <Snackbar
+        open={successOpen}
+        autoHideDuration={2500}
+        onClose={() => setSuccessOpen(false)}
+        anchorOrigin={{ vertical: 'top', horizontal: 'right' }}
+      >
+        <Alert severity="success" variant="filled" onClose={() => setSuccessOpen(false)}>
+          Conta criada com sucesso
+        </Alert>
+      </Snackbar>
     </Box>
   );
 }

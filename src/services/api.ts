@@ -51,6 +51,7 @@ export interface LeadCustomField {
 export interface Lead {
   id: string;
   workspaceId: string;
+  funnelId: string;
   name: string;
   email: string;
   phone: string;
@@ -62,7 +63,15 @@ export interface Lead {
   createdAt: string;
 }
 
-export type CreateLeadPayload = Omit<Lead, 'id' | 'workspaceId' | 'createdAt'>;
+export interface Funnel {
+  id: string;
+  workspaceId: string;
+  name: string;
+  sortOrder: number;
+  createdAt: string;
+}
+
+export type CreateLeadPayload = Omit<Lead, 'id' | 'workspaceId' | 'funnelId' | 'createdAt'>;
 export type UpdateLeadPayload = CreateLeadPayload;
 
 interface SupabaseAuthResponse {
@@ -87,6 +96,7 @@ interface SupabaseWorkspaceListResponse {
 interface SupabaseLead {
   id: string;
   workspace_id: string;
+  funnel_id: string;
   name: string;
   email: string;
   phone: string;
@@ -100,6 +110,18 @@ interface SupabaseLead {
 
 interface SupabaseLeadListResponse {
   leads: SupabaseLead[];
+}
+
+interface SupabaseFunnel {
+  id: string;
+  workspace_id: string;
+  name: string;
+  sort_order: number;
+  created_at: string;
+}
+
+interface SupabaseFunnelListResponse {
+  funnels: SupabaseFunnel[];
 }
 
 interface OkResponse {
@@ -128,6 +150,7 @@ function mapLead(data: SupabaseLead): Lead {
   return {
     id: data.id,
     workspaceId: data.workspace_id,
+    funnelId: data.funnel_id,
     name: data.name,
     email: data.email,
     phone: data.phone,
@@ -136,6 +159,16 @@ function mapLead(data: SupabaseLead): Lead {
     source: data.source,
     notes: data.notes,
     customFields: data.custom_fields || [],
+    createdAt: data.created_at,
+  };
+}
+
+function mapFunnel(data: SupabaseFunnel): Funnel {
+  return {
+    id: data.id,
+    workspaceId: data.workspace_id,
+    name: data.name,
+    sortOrder: data.sort_order,
     createdAt: data.created_at,
   };
 }
@@ -213,6 +246,30 @@ export const leadService = {
       .then((res) => ({ ...res, data: mapLead(res.data) })),
 
   remove: (workspaceId: string, leadId: string) => api.delete<OkResponse>(`/workspace/${workspaceId}/leads/${leadId}`),
+
+  moveToFunnel: (workspaceId: string, leadId: string, funnelId: string) =>
+    api
+      .put<SupabaseLead>(`/workspace/${workspaceId}/leads/${leadId}/funnel`, { funnelId })
+      .then((res) => ({ ...res, data: mapLead(res.data) })),
+};
+
+export const funnelService = {
+  list: (workspaceId: string) =>
+    api
+      .get<SupabaseFunnelListResponse>(`/workspace/${workspaceId}/funnels`)
+      .then((res) => ({ ...res, data: res.data.funnels.map(mapFunnel) })),
+
+  create: (workspaceId: string, name = 'Novo funil') =>
+    api
+      .post<SupabaseFunnel>(`/workspace/${workspaceId}/funnels`, { name })
+      .then((res) => ({ ...res, data: mapFunnel(res.data) })),
+
+  update: (workspaceId: string, funnelId: string, name: string) =>
+    api
+      .put<SupabaseFunnel>(`/workspace/${workspaceId}/funnels/${funnelId}`, { name })
+      .then((res) => ({ ...res, data: mapFunnel(res.data) })),
+
+  remove: (workspaceId: string, funnelId: string) => api.delete<OkResponse>(`/workspace/${workspaceId}/funnels/${funnelId}`),
 };
 
 export default api;

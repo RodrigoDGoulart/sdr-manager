@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "dev:backend": "npx supabase function serve api --no-verify-jwt",
+    "dev:backend": "npx supabase functions serve api --no-verify-jwt",
+    "migrate": "npx supabase migration up --local --debug",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "test": "vitest run",

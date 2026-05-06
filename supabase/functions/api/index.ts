@@ -42,6 +42,24 @@ const workspaceSchema = z.object({
   name: z.string().trim().min(1),
 });
 
+const defaultFunnels = [
+  'Base',
+  'Lead Mapeado',
+  'Tentando contato',
+  'conexão iniciada',
+  'desqualificado',
+  'qualificado',
+  'reunião agendada',
+];
+
+const funnelSchema = z.object({
+  name: z.string().trim().min(1),
+});
+
+const moveLeadSchema = z.object({
+  funnelId: z.uuid(),
+});
+
 const leadFieldTypeSchema = z.enum(['text', 'long_text', 'number', 'date']);
 
 const customLeadFieldSchema = z.object({
@@ -307,6 +325,16 @@ Deno.serve(async (req) => {
 
           if (error) return jsonResponse({ error: error.message }, 400);
 
+          const { error: funnelError } = await supabase.from('funnels').insert(
+            defaultFunnels.map((funnelName, index) => ({
+              workspace_id: data.id,
+              name: funnelName,
+              sort_order: index,
+            })),
+          );
+
+          if (funnelError) return jsonResponse({ error: funnelError.message }, 400);
+
           return jsonResponse(data, 201);
         }
       }
@@ -352,6 +380,128 @@ Deno.serve(async (req) => {
         }
       }
 
+      if (resource === 'workspace' && parts.length === 3 && parts[2] === 'funnels') {
+        const workspaceId = subresource;
+
+        const { data: workspace, error: workspaceError } = await supabase
+          .from('workspaces')
+          .select('id')
+          .eq('id', workspaceId)
+          .eq('owner_id', authUserId)
+          .maybeSingle();
+
+        if (workspaceError) return jsonResponse({ error: workspaceError.message }, 400);
+        if (!workspace) return jsonResponse({ error: 'Workspace não encontrado' }, 404);
+
+        if (req.method === 'GET') {
+          const { data, error } = await supabase
+            .from('funnels')
+            .select('id,workspace_id,name,sort_order,created_at')
+            .eq('workspace_id', workspaceId)
+            .order('sort_order', { ascending: true })
+            .order('created_at', { ascending: true });
+
+          if (error) return jsonResponse({ error: error.message }, 400);
+
+          return jsonResponse({ funnels: data });
+        }
+
+        if (req.method === 'POST') {
+          const { name } = funnelSchema.parse(await readJson(req));
+          const { data: lastFunnel, error: lastFunnelError } = await supabase
+            .from('funnels')
+            .select('sort_order')
+            .eq('workspace_id', workspaceId)
+            .order('sort_order', { ascending: false })
+            .limit(1)
+            .maybeSingle();
+
+          if (lastFunnelError) return jsonResponse({ error: lastFunnelError.message }, 400);
+
+          const { data, error } = await supabase
+            .from('funnels')
+            .insert({
+              workspace_id: workspaceId,
+              name,
+              sort_order: (lastFunnel?.sort_order ?? -1) + 1,
+            })
+            .select('id,workspace_id,name,sort_order,created_at')
+            .single();
+
+          if (error) return jsonResponse({ error: error.message }, 400);
+
+          return jsonResponse(data, 201);
+        }
+      }
+
+      if (resource === 'workspace' && parts.length === 4 && parts[2] === 'funnels') {
+        const workspaceId = subresource;
+        const funnelId = parts[3];
+        const adminClient = createAdminClient();
+
+        const { data: workspace, error: workspaceError } = await supabase
+          .from('workspaces')
+          .select('id')
+          .eq('id', workspaceId)
+          .eq('owner_id', authUserId)
+          .maybeSingle();
+
+        if (workspaceError) return jsonResponse({ error: workspaceError.message }, 400);
+        if (!workspace) return jsonResponse({ error: 'Workspace não encontrado' }, 404);
+
+        const { data: funnel, error: funnelError } = await supabase
+          .from('funnels')
+          .select('id')
+          .eq('id', funnelId)
+          .eq('workspace_id', workspaceId)
+          .maybeSingle();
+
+        if (funnelError) return jsonResponse({ error: funnelError.message }, 400);
+        if (!funnel) return jsonResponse({ error: 'Funil não encontrado' }, 404);
+
+        if (req.method === 'PUT') {
+          const { name } = funnelSchema.parse(await readJson(req));
+          const { data, error } = await adminClient
+            .from('funnels')
+            .update({ name })
+            .eq('id', funnelId)
+            .eq('workspace_id', workspaceId)
+            .select('id,workspace_id,name,sort_order,created_at')
+            .maybeSingle();
+
+          if (error) return jsonResponse({ error: error.message }, 400);
+          if (!data) return jsonResponse({ error: 'Funil não encontrado' }, 404);
+
+          return jsonResponse(data);
+        }
+
+        if (req.method === 'DELETE') {
+          const { count, error: countError } = await adminClient
+            .from('leads')
+            .select('id', { count: 'exact', head: true })
+            .eq('workspace_id', workspaceId)
+            .eq('funnel_id', funnelId);
+
+          if (countError) return jsonResponse({ error: countError.message }, 400);
+          if ((count ?? 0) > 0) {
+            return jsonResponse({ error: 'Esvazie o funil antes de excluí-lo' }, 400);
+          }
+
+          const { data, error } = await adminClient
+            .from('funnels')
+            .delete()
+            .eq('id', funnelId)
+            .eq('workspace_id', workspaceId)
+            .select('id')
+            .maybeSingle();
+
+          if (error) return jsonResponse({ error: error.message }, 400);
+          if (!data) return jsonResponse({ error: 'Funil não encontrado' }, 404);
+
+          return jsonResponse({ ok: true });
+        }
+      }
+
       if (resource === 'workspace' && parts.length === 3 && parts[2] === 'leads') {
         const workspaceId = subresource;
 
@@ -368,7 +518,7 @@ Deno.serve(async (req) => {
         if (req.method === 'GET') {
           const { data, error } = await supabase
             .from('leads')
-            .select('id,workspace_id,name,email,phone,company,role,source,notes,custom_fields,created_at')
+            .select('id,workspace_id,funnel_id,name,email,phone,company,role,source,notes,custom_fields,created_at')
             .eq('workspace_id', workspaceId)
             .order('created_at', { ascending: false });
 
@@ -379,10 +529,22 @@ Deno.serve(async (req) => {
 
         if (req.method === 'POST') {
           const lead = leadSchema.parse(await readJson(req));
+          const { data: baseFunnel, error: baseFunnelError } = await supabase
+            .from('funnels')
+            .select('id')
+            .eq('workspace_id', workspaceId)
+            .order('sort_order', { ascending: true })
+            .limit(1)
+            .maybeSingle();
+
+          if (baseFunnelError) return jsonResponse({ error: baseFunnelError.message }, 400);
+          if (!baseFunnel) return jsonResponse({ error: 'Funil base não encontrado' }, 404);
+
           const { data, error } = await supabase
             .from('leads')
             .insert({
               workspace_id: workspaceId,
+              funnel_id: baseFunnel.id,
               name: lead.name,
               email: lead.email,
               phone: lead.phone,
@@ -392,7 +554,7 @@ Deno.serve(async (req) => {
               notes: lead.notes,
               custom_fields: lead.customFields,
             })
-            .select('id,workspace_id,name,email,phone,company,role,source,notes,custom_fields,created_at')
+            .select('id,workspace_id,funnel_id,name,email,phone,company,role,source,notes,custom_fields,created_at')
             .single();
 
           if (error) return jsonResponse({ error: error.message }, 400);
@@ -432,7 +594,7 @@ Deno.serve(async (req) => {
             })
             .eq('id', leadId)
             .eq('workspace_id', workspaceId)
-            .select('id,workspace_id,name,email,phone,company,role,source,notes,custom_fields,created_at')
+            .select('id,workspace_id,funnel_id,name,email,phone,company,role,source,notes,custom_fields,created_at')
             .maybeSingle();
 
           if (error) return jsonResponse({ error: error.message }, 400);
@@ -455,6 +617,46 @@ Deno.serve(async (req) => {
 
           return jsonResponse({ ok: true });
         }
+      }
+
+      if (resource === 'workspace' && parts.length === 5 && parts[2] === 'leads' && parts[4] === 'funnel') {
+        const workspaceId = subresource;
+        const leadId = parts[3];
+        const { funnelId } = moveLeadSchema.parse(await readJson(req));
+        const adminClient = createAdminClient();
+
+        const { data: workspace, error: workspaceError } = await supabase
+          .from('workspaces')
+          .select('id')
+          .eq('id', workspaceId)
+          .eq('owner_id', authUserId)
+          .maybeSingle();
+
+        if (workspaceError) return jsonResponse({ error: workspaceError.message }, 400);
+        if (!workspace) return jsonResponse({ error: 'Workspace não encontrado' }, 404);
+
+        const { data: funnel, error: funnelError } = await supabase
+          .from('funnels')
+          .select('id')
+          .eq('id', funnelId)
+          .eq('workspace_id', workspaceId)
+          .maybeSingle();
+
+        if (funnelError) return jsonResponse({ error: funnelError.message }, 400);
+        if (!funnel) return jsonResponse({ error: 'Funil não encontrado' }, 404);
+
+        const { data, error } = await adminClient
+          .from('leads')
+          .update({ funnel_id: funnelId })
+          .eq('id', leadId)
+          .eq('workspace_id', workspaceId)
+          .select('id,workspace_id,funnel_id,name,email,phone,company,role,source,notes,custom_fields,created_at')
+          .maybeSingle();
+
+        if (error) return jsonResponse({ error: error.message }, 400);
+        if (!data) return jsonResponse({ error: 'Lead não encontrado' }, 404);
+
+        return jsonResponse(data);
       }
     }
 

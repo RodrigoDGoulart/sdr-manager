@@ -19,8 +19,13 @@ const AuthContext = createContext<AuthContextType | null>(null);
 
 function parseJwt(token: string): { userId: string } | null {
   try {
-    const base64 = token.split('.')[1];
-    return JSON.parse(atob(base64));
+    const base64Url = token.split('.')[1];
+    const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+    const paddedBase64 = base64.padEnd(base64.length + ((4 - base64.length % 4) % 4), '=');
+    const payload = JSON.parse(atob(paddedBase64));
+    const userId = payload.sub || payload.userId;
+
+    return typeof userId === 'string' ? { userId } : null;
   } catch {
     return null;
   }

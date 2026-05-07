@@ -38,9 +38,18 @@ const updateUserSchema = z
     message: 'Provide at least name or email',
   });
 
-const workspaceSchema = z.object({
+const createWorkspaceSchema = z.object({
   name: z.string().trim().min(1),
 });
+
+const updateWorkspaceSchema = z
+  .object({
+    name: z.string().trim().min(1).optional(),
+    autoMessageDestinationFunnelId: z.uuid().optional(),
+  })
+  .refine((value) => value.name || value.autoMessageDestinationFunnelId, {
+    message: 'Provide at least name or autoMessageDestinationFunnelId',
+  });
 
 const defaultFunnels = [
   'Base',
@@ -80,6 +89,10 @@ const generateLeadMessagesSchema = z.object({
   campaignId: z.uuid(),
 });
 
+const sendLeadMessageSchema = z.object({
+  message: z.string().trim().min(1),
+});
+
 const leadFieldTypeSchema = z.enum(['text', 'long_text', 'number', 'date']);
 
 const customLeadFieldSchema = z.object({
@@ -102,6 +115,7 @@ const leadSchema = z.object({
   customFields: z.array(customLeadFieldSchema).default([]),
 });
 
+const workspaceSelect = 'id,name,created_at,owner_id,auto_message_destination_funnel_id';
 const leadSelect = 'id,workspace_id,funnel_id,name,email,phone,company,role,source,notes,custom_fields,generated_messages,notification,created_at';
 const leadMessagePrompt = `Voce e um assistente de SDR especializado em criar mensagens comerciais personalizadas para leads.
 
@@ -666,7 +680,7 @@ Deno.serve(async (req) => {
         if (req.method === 'GET') {
           const { data, error } = await supabase
             .from('workspaces')
-            .select('id,name,created_at,owner_id')
+            .select(workspaceSelect)
             .order('created_at', { ascending: false });
 
           if (error) return jsonResponse({ error: error.message }, 400);
@@ -675,11 +689,11 @@ Deno.serve(async (req) => {
         }
 
         if (req.method === 'POST') {
-          const { name } = workspaceSchema.parse(await readJson(req));
+          const { name } = createWorkspaceSchema.parse(await readJson(req));
           const { data, error } = await supabase
             .from('workspaces')
             .insert({ name, owner_id: authUserId })
-            .select('id,name,created_at,owner_id')
+            .select(workspaceSelect)
             .single();
 
           if (error) return jsonResponse({ error: error.message }, 400);
@@ -694,6 +708,27 @@ Deno.serve(async (req) => {
 
           if (funnelError) return jsonResponse({ error: funnelError.message }, 400);
 
+          const { data: destinationFunnel, error: destinationFunnelError } = await supabase
+            .from('funnels')
+            .select('id')
+            .eq('workspace_id', data.id)
+            .eq('name', 'Tentando contato')
+            .maybeSingle();
+
+          if (destinationFunnelError) return jsonResponse({ error: destinationFunnelError.message }, 400);
+
+          if (destinationFunnel) {
+            const { data: updatedWorkspace, error: destinationUpdateError } = await supabase
+              .from('workspaces')
+              .update({ auto_message_destination_funnel_id: destinationFunnel.id })
+              .eq('id', data.id)
+              .select(workspaceSelect)
+              .single();
+
+            if (destinationUpdateError) return jsonResponse({ error: destinationUpdateError.message }, 400);
+            return jsonResponse(updatedWorkspace, 201);
+          }
+
           return jsonResponse(data, 201);
         }
       }
@@ -704,7 +739,7 @@ Deno.serve(async (req) => {
         if (req.method === 'GET') {
           const { data, error } = await supabase
             .from('workspaces')
-            .select('id,name,created_at,owner_id')
+            .select(workspaceSelect)
             .eq('id', targetId)
             .single();
 
@@ -714,12 +749,30 @@ Deno.serve(async (req) => {
         }
 
         if (req.method === 'PUT') {
-          const { name } = workspaceSchema.parse(await readJson(req));
+          const payload = updateWorkspaceSchema.parse(await readJson(req));
+          const updatePayload: Json = {};
+
+          if (payload.name) updatePayload.name = payload.name;
+
+          if (payload.autoMessageDestinationFunnelId) {
+            const { data: funnel, error: funnelError } = await supabase
+              .from('funnels')
+              .select('id')
+              .eq('id', payload.autoMessageDestinationFunnelId)
+              .eq('workspace_id', targetId)
+              .maybeSingle();
+
+            if (funnelError) return jsonResponse({ error: funnelError.message }, 400);
+            if (!funnel) return jsonResponse({ error: 'Funil não encontrado' }, 404);
+
+            updatePayload.auto_message_destination_funnel_id = payload.autoMessageDestinationFunnelId;
+          }
+
           const { data, error } = await supabase
             .from('workspaces')
-            .update({ name })
+            .update(updatePayload)
             .eq('id', targetId)
-            .select('id,name,created_at,owner_id')
+            .select(workspaceSelect)
             .single();
 
           if (error) return jsonResponse({ error: error.message }, 400);
@@ -1359,6 +1412,76 @@ Deno.serve(async (req) => {
 
         if (error) return jsonResponse({ error: error.message }, 400);
         if (!data) return jsonResponse({ error: 'Lead nÃ£o encontrado' }, 404);
+
+        return jsonResponse(data);
+      }
+
+      if (resource === 'workspace' && parts.length === 5 && parts[2] === 'leads' && parts[4] === 'send-message') {
+        const workspaceId = subresource;
+        const leadId = parts[3];
+        sendLeadMessageSchema.parse(await readJson(req));
+        const adminClient = createAdminClient();
+
+        const { data: workspace, error: workspaceError } = await supabase
+          .from('workspaces')
+          .select('id,auto_message_destination_funnel_id')
+          .eq('id', workspaceId)
+          .eq('owner_id', authUserId)
+          .maybeSingle();
+
+        if (workspaceError) return jsonResponse({ error: workspaceError.message }, 400);
+        if (!workspace) return jsonResponse({ error: 'Workspace não encontrado' }, 404);
+
+        const { data: lead, error: leadError } = await supabase
+          .from('leads')
+          .select('id')
+          .eq('id', leadId)
+          .eq('workspace_id', workspaceId)
+          .maybeSingle();
+
+        if (leadError) return jsonResponse({ error: leadError.message }, 400);
+        if (!lead) return jsonResponse({ error: 'Lead não encontrado' }, 404);
+
+        let destinationFunnelId = workspace.auto_message_destination_funnel_id as string | null;
+
+        if (destinationFunnelId) {
+          const { data: configuredFunnel, error: configuredFunnelError } = await supabase
+            .from('funnels')
+            .select('id')
+            .eq('id', destinationFunnelId)
+            .eq('workspace_id', workspaceId)
+            .maybeSingle();
+
+          if (configuredFunnelError) return jsonResponse({ error: configuredFunnelError.message }, 400);
+          if (!configuredFunnel) destinationFunnelId = null;
+        }
+
+        if (!destinationFunnelId) {
+          const { data: defaultFunnel, error: defaultFunnelError } = await supabase
+            .from('funnels')
+            .select('id')
+            .eq('workspace_id', workspaceId)
+            .eq('name', 'Tentando contato')
+            .maybeSingle();
+
+          if (defaultFunnelError) return jsonResponse({ error: defaultFunnelError.message }, 400);
+          destinationFunnelId = defaultFunnel?.id || null;
+        }
+
+        if (!destinationFunnelId) {
+          return jsonResponse({ error: 'Coluna de destino não encontrada' }, 404);
+        }
+
+        const { data, error } = await adminClient
+          .from('leads')
+          .update({ funnel_id: destinationFunnelId })
+          .eq('id', leadId)
+          .eq('workspace_id', workspaceId)
+          .select(leadSelect)
+          .maybeSingle();
+
+        if (error) return jsonResponse({ error: error.message }, 400);
+        if (!data) return jsonResponse({ error: 'Lead não encontrado' }, 404);
 
         return jsonResponse(data);
       }

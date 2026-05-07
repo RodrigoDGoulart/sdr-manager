@@ -23,8 +23,10 @@ import { useNavigate, useParams } from 'react-router-dom';
 import type { AxiosError } from 'axios';
 import Sidebar from '../components/Sidebar';
 import {
+  funnelService,
   llmSettingsService,
   workspaceService,
+  type Funnel,
   type LlmModel,
   type Workspace,
   type WorkspaceLlmSettings,
@@ -39,12 +41,16 @@ export default function WorkspaceSettingsPage() {
   const navigate = useNavigate();
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [settings, setSettings] = useState<WorkspaceLlmSettings | null>(null);
+  const [funnels, setFunnels] = useState<Funnel[]>([]);
+  const [selectedDestinationFunnelId, setSelectedDestinationFunnelId] = useState('');
   const [apiKey, setApiKey] = useState('');
   const [selectedModel, setSelectedModel] = useState('');
   const [models, setModels] = useState<LlmModel[]>([]);
   const [loading, setLoading] = useState(true);
   const [testing, setTesting] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [savingDestination, setSavingDestination] = useState(false);
+  const [destinationError, setDestinationError] = useState('');
   const [tokenStatus, setTokenStatus] = useState<'idle' | 'valid' | 'invalid'>('idle');
   const [statusMessage, setStatusMessage] = useState('');
   const [toast, setToast] = useState('');
@@ -55,11 +61,14 @@ export default function WorkspaceSettingsPage() {
     let ignore = false;
     setLoading(true);
 
-    Promise.all([workspaceService.getById(id), llmSettingsService.get(id)])
-      .then(([workspaceRes, settingsRes]) => {
+    Promise.all([workspaceService.getById(id), llmSettingsService.get(id), funnelService.list(id)])
+      .then(([workspaceRes, settingsRes, funnelsRes]) => {
         if (ignore) return;
+        const defaultFunnel = funnelsRes.data.find((funnel) => funnel.name.toLowerCase() === 'tentando contato');
         setWorkspace(workspaceRes.data);
         setSettings(settingsRes.data);
+        setFunnels(funnelsRes.data);
+        setSelectedDestinationFunnelId(workspaceRes.data.autoMessageDestinationFunnelId || defaultFunnel?.id || '');
         setSelectedModel(settingsRes.data.model);
       })
       .catch(() => {
@@ -142,6 +151,24 @@ export default function WorkspaceSettingsPage() {
       setStatusMessage(axiosErr.response?.data?.error || 'Não foi possível salvar a configuração.');
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function handleSaveDestination() {
+    if (!id || !selectedDestinationFunnelId) return;
+
+    setSavingDestination(true);
+    setDestinationError('');
+
+    try {
+      const res = await workspaceService.updateAutoMessageDestination(id, selectedDestinationFunnelId);
+      setWorkspace(res.data);
+      setToast('Coluna de destino salva com sucesso.');
+    } catch (err) {
+      const axiosErr = err as AxiosError<ApiError>;
+      setDestinationError(axiosErr.response?.data?.error || 'Não foi possível salvar a coluna de destino.');
+    } finally {
+      setSavingDestination(false);
     }
   }
 
@@ -270,6 +297,70 @@ export default function WorkspaceSettingsPage() {
                       </Button>
                     )}
                   </Stack>
+                </Stack>
+              </Box>
+
+              <Box
+                sx={{
+                  bgcolor: 'background.paper',
+                  border: 1,
+                  borderColor: 'divider',
+                  borderRadius: 1,
+                  p: { xs: 2, sm: 3 },
+                }}
+              >
+                <Stack spacing={2.5}>
+                  <Box>
+                    <Typography variant="h6" sx={{ fontWeight: 700 }}>
+                      Colunas de destino
+                    </Typography>
+                    <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+                      Defina para qual coluna o lead será movido ao enviar uma mensagem automática.
+                    </Typography>
+                  </Box>
+
+                  <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5} alignItems={{ sm: 'center' }}>
+                    <FormControl fullWidth>
+                      <InputLabel id="auto-message-destination-label">
+                        Ao enviar mensagem automática, mover Lead para...
+                      </InputLabel>
+                      <Select
+                        labelId="auto-message-destination-label"
+                        label="Ao enviar mensagem automática, mover Lead para..."
+                        value={selectedDestinationFunnelId}
+                        onChange={(event) => {
+                          setSelectedDestinationFunnelId(event.target.value);
+                          setDestinationError('');
+                        }}
+                        disabled={savingDestination || funnels.length === 0}
+                      >
+                        {funnels.map((funnel) => (
+                          <MenuItem key={funnel.id} value={funnel.id}>
+                            {funnel.name}
+                          </MenuItem>
+                        ))}
+                      </Select>
+                    </FormControl>
+
+                    <Button
+                      variant="contained"
+                      startIcon={savingDestination ? <CircularProgress size={16} color="inherit" /> : <SaveIcon />}
+                      onClick={handleSaveDestination}
+                      disabled={
+                        savingDestination ||
+                        !selectedDestinationFunnelId ||
+                        selectedDestinationFunnelId === workspace?.autoMessageDestinationFunnelId
+                      }
+                      sx={{ minWidth: { sm: 120 } }}
+                    >
+                      Salvar
+                    </Button>
+                  </Stack>
+                  {destinationError && (
+                    <Alert severity="error">
+                      {destinationError}
+                    </Alert>
+                  )}
                 </Stack>
               </Box>
             </Stack>

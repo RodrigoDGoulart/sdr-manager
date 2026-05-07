@@ -36,6 +36,7 @@ export interface Workspace {
   id: string;
   name: string;
   userId: string;
+  autoMessageDestinationFunnelId: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -117,6 +118,7 @@ interface SupabaseWorkspace {
   id: string;
   name: string;
   owner_id: string;
+  auto_message_destination_funnel_id: string | null;
   created_at: string;
 }
 
@@ -202,6 +204,7 @@ function mapWorkspace(data: SupabaseWorkspace): Workspace {
     id: data.id,
     name: data.name,
     userId: data.owner_id,
+    autoMessageDestinationFunnelId: data.auto_message_destination_funnel_id || null,
     createdAt: data.created_at,
     updatedAt: data.created_at,
   };
@@ -323,6 +326,11 @@ export const workspaceService = {
       .put<SupabaseWorkspace>(`/workspace/${id}`, { name })
       .then((res) => ({ ...res, data: mapWorkspace(res.data) })),
 
+  updateAutoMessageDestination: (id: string, funnelId: string) =>
+    api
+      .put<SupabaseWorkspace>(`/workspace/${id}`, { autoMessageDestinationFunnelId: funnelId })
+      .then((res) => ({ ...res, data: mapWorkspace(res.data) })),
+
   remove: (id: string) => api.delete(`/workspace/${id}`),
 };
 
@@ -352,6 +360,11 @@ export const leadService = {
   generateMessages: (workspaceId: string, leadId: string, campaignId: string) =>
     api
       .post<SupabaseLead>(`/workspace/${workspaceId}/leads/${leadId}/messages`, { campaignId })
+      .then((res) => ({ ...res, data: mapLead(res.data) })),
+
+  sendMessage: (workspaceId: string, leadId: string, message: string) =>
+    api
+      .post<SupabaseLead>(`/workspace/${workspaceId}/leads/${leadId}/send-message`, { message })
       .then((res) => ({ ...res, data: mapLead(res.data) })),
 
   clearNotification: (workspaceId: string, leadId: string) =>

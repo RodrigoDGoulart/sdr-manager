@@ -249,9 +249,23 @@ export default function WorkspacePage() {
     }
   }
 
-  async function handleSendMessage() {
-    await new Promise((resolve) => setTimeout(resolve, 1000));
-    showSuccess("Mensagem enviada com sucesso.");
+  async function handleSendMessage(message: string) {
+    if (!id || !selectedLead) return;
+
+    try {
+      const res = await leadService.sendMessage(id, selectedLead.id, message);
+      setLeads((current) =>
+        current.map((lead) => (lead.id === res.data.id ? res.data : lead)),
+      );
+      setSelectedLead(res.data);
+      showSuccess("Mensagem enviada com sucesso.");
+    } catch (err) {
+      const axiosErr = err as AxiosError<ApiError>;
+      showError(
+        axiosErr.response?.data?.error ||
+          "Não foi possível enviar a mensagem. Tente novamente.",
+      );
+    }
   }
 
   function openLeadDialog(lead: Lead) {

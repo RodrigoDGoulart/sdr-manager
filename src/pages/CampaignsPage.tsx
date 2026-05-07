@@ -75,6 +75,17 @@ export default function CampaignsPage() {
     [editingCampaign],
   );
 
+  const availableTriggerFunnels = useMemo(() => {
+    const editingCampaignId = editingCampaign?.id;
+    const usedTriggerFunnelIds = new Set(
+      campaigns
+        .filter((campaign) => campaign.id !== editingCampaignId && campaign.triggerFunnelId)
+        .map((campaign) => campaign.triggerFunnelId),
+    );
+
+    return funnels.filter((funnel) => !usedTriggerFunnelIds.has(funnel.id));
+  }, [campaigns, editingCampaign?.id, funnels]);
+
   useEffect(() => {
     if (!id) return;
 
@@ -362,7 +373,7 @@ export default function CampaignsPage() {
         title={editingCampaign ? 'Editar campanha' : 'Adicionar campanha'}
         loading={savingCampaign}
         error={campaignError}
-        funnels={funnels}
+        funnels={availableTriggerFunnels}
         initialCampaign={editingPayload}
         llmConfigured={llmConfigured}
         onClose={() => {

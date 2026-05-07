@@ -126,7 +126,7 @@ export default function CampaignDialog({
             value={campaign.triggerFunnelId || ''}
             onChange={(event) => updateField('triggerFunnelId', event.target.value)}
             fullWidth
-            helperText="Opcional"
+            helperText="Opcional. Etapas ja usadas por outras campanhas ficam ocultas."
           >
             <MenuItem value="">Nenhuma</MenuItem>
             {funnels.map((funnel) => (

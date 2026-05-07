@@ -172,10 +172,6 @@ Retorne somente neste formato JSON:
   ]
 }`;
 
-function wait(ms: number) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
 function buildGeneratedMessages(
   lead: { name: string; company: string; role: string },
   campaign: { name: string },
@@ -186,6 +182,8 @@ function buildGeneratedMessages(
     `${lead.name}, tudo bem? Separei uma abordagem direta ligada a campanha ${campaign.name}, pensando no seu papel como ${lead.role}. A ideia é entender se existe espaço para melhorar a rotina do time sem adicionar complexidade. Posso te enviar alguns horários?`,
   ];
 }
+
+void buildGeneratedMessages;
 
 async function loadLeadMessagePrompt() {
   return leadMessagePrompt;
@@ -449,6 +447,28 @@ async function getTriggerCampaign(
     .order('created_at', { ascending: false })
     .limit(1)
     .maybeSingle();
+
+  if (error) throw error;
+  return data;
+}
+
+async function getCampaignUsingTrigger(
+  supabase: SupabaseClient,
+  workspaceId: string,
+  funnelId: string,
+  ignoredCampaignId?: string,
+) {
+  let query = supabase
+    .from('campaigns')
+    .select('id')
+    .eq('workspace_id', workspaceId)
+    .eq('trigger_funnel_id', funnelId);
+
+  if (ignoredCampaignId) {
+    query = query.neq('id', ignoredCampaignId);
+  }
+
+  const { data, error } = await query.limit(1).maybeSingle();
 
   if (error) throw error;
   return data;
@@ -1040,6 +1060,15 @@ Deno.serve(async (req) => {
           const campaign = campaignSchema.parse(await readJson(req));
 
           if (campaign.triggerFunnelId) {
+            const campaignUsingTrigger = await getCampaignUsingTrigger(
+              supabase,
+              workspaceId,
+              campaign.triggerFunnelId,
+            );
+            if (campaignUsingTrigger) {
+              return jsonResponse({ error: 'Este funil ja esta configurado como gatilho de outra campanha.' }, 400);
+            }
+
             const { data: funnel, error: funnelError } = await supabase
               .from('funnels')
               .select('id')
@@ -1099,6 +1128,16 @@ Deno.serve(async (req) => {
           const campaign = campaignSchema.parse(await readJson(req));
 
           if (campaign.triggerFunnelId) {
+            const campaignUsingTrigger = await getCampaignUsingTrigger(
+              supabase,
+              workspaceId,
+              campaign.triggerFunnelId,
+              campaignId,
+            );
+            if (campaignUsingTrigger) {
+              return jsonResponse({ error: 'Este funil ja esta configurado como gatilho de outra campanha.' }, 400);
+            }
+
             const { data: funnel, error: funnelError } = await supabase
               .from('funnels')
               .select('id')

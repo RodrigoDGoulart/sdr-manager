@@ -7,6 +7,7 @@ import { WorkspaceProvider } from './contexts/WorkspaceContext';
 import ProtectedRoute from './components/ProtectedRoute';
 import LoginPage from './pages/LoginPage';
 import RegisterPage from './pages/RegisterPage';
+import DashboardPage from './pages/DashboardPage';
 import HomePage from './pages/HomePage';
 import WorkspacePage from './pages/WorkspacePage';
 import CampaignsPage from './pages/CampaignsPage';
@@ -38,6 +39,14 @@ function AppRoutes() {
           />
           <Route
             path="/workspace/:id"
+            element={
+              <ProtectedRoute>
+                <DashboardPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/workspace/:id/leads"
             element={
               <ProtectedRoute>
                 <WorkspacePage />

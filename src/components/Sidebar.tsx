@@ -22,6 +22,7 @@ import MoreHorizIcon from '@mui/icons-material/MoreHoriz';
 import LogoutIcon from '@mui/icons-material/Logout';
 import AddIcon from '@mui/icons-material/Add';
 import AccountCircleIcon from '@mui/icons-material/AccountCircle';
+import DashboardIcon from '@mui/icons-material/Dashboard';
 import PeopleAltIcon from '@mui/icons-material/PeopleAlt';
 import CampaignIcon from '@mui/icons-material/Campaign';
 import SettingsIcon from '@mui/icons-material/Settings';
@@ -152,6 +153,7 @@ export default function Sidebar() {
       setDeleteWsOpen(false);
       if (
         location.pathname === `/workspace/${activeWsId}` ||
+        location.pathname === `/workspace/${activeWsId}/leads` ||
         location.pathname === `/workspace/${activeWsId}/campaigns` ||
         location.pathname === `/workspace/${activeWsId}/settings`
       ) {
@@ -237,17 +239,19 @@ export default function Sidebar() {
           </ListItemButton>
 
           {workspaces.map((ws) => {
-            const leadsPath = `/workspace/${ws.id}`;
+            const dashboardPath = `/workspace/${ws.id}`;
+            const leadsPath = `/workspace/${ws.id}/leads`;
             const campaignsPath = `/workspace/${ws.id}/campaigns`;
             const settingsPath = `/workspace/${ws.id}/settings`;
+            const isDashboardActive = location.pathname === dashboardPath;
             const isLeadsActive = location.pathname === leadsPath;
             const isCampaignsActive = location.pathname === campaignsPath;
             const isSettingsActive = location.pathname === settingsPath;
-            const isActive = isLeadsActive || isCampaignsActive || isSettingsActive;
+            const isActive = isDashboardActive || isLeadsActive || isCampaignsActive || isSettingsActive;
             return (
               <Box key={ws.id}>
                 <ListItemButton
-                  onClick={() => navigate(leadsPath)}
+                  onClick={() => navigate(dashboardPath)}
                   selected={isActive}
                   sx={{
                     borderRadius: 1,
@@ -273,6 +277,24 @@ export default function Sidebar() {
 
                 {isActive && (
                   <Box sx={{ pl: 1.5, py: 0.25 }}>
+                    <ListItemButton
+                      onClick={() => navigate(dashboardPath)}
+                      selected={isDashboardActive}
+                      sx={{
+                        borderRadius: 1,
+                        py: 0.35,
+                        color: 'primary.contrastText',
+                        opacity: 0.9,
+                        '&:hover': { bgcolor: 'rgba(255,255,255,0.1)' },
+                        '&.Mui-selected': { bgcolor: 'rgba(255,255,255,0.12)', '&:hover': { bgcolor: 'rgba(255,255,255,0.18)' } },
+                      }}
+                    >
+                      <DashboardIcon sx={{ fontSize: 15, mr: 1, opacity: 0.75 }} />
+                      <ListItemText
+                        primary="Dashboard"
+                        slotProps={{ primary: { variant: 'body2', fontWeight: isDashboardActive ? 600 : 400 } }}
+                      />
+                    </ListItemButton>
                     <ListItemButton
                       onClick={() => navigate(leadsPath)}
                       selected={isLeadsActive}

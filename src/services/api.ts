@@ -60,6 +60,8 @@ export interface Lead {
   source: string;
   notes: string;
   customFields: LeadCustomField[];
+  generatedMessages: string[];
+  notification: boolean;
   createdAt: string;
 }
 
@@ -82,7 +84,21 @@ export interface Campaign {
   updatedAt: string;
 }
 
-export type CreateLeadPayload = Omit<Lead, 'id' | 'workspaceId' | 'funnelId' | 'createdAt'> & {
+export interface LlmModel {
+  id: string;
+  ownedBy?: string;
+}
+
+export interface WorkspaceLlmSettings {
+  provider: 'groq';
+  model: string;
+  apiKeyPreview: string;
+  isConfigured: boolean;
+  validatedAt: string | null;
+  updatedAt: string | null;
+}
+
+export type CreateLeadPayload = Omit<Lead, 'id' | 'workspaceId' | 'funnelId' | 'generatedMessages' | 'notification' | 'createdAt'> & {
   funnelId?: string;
 };
 export type UpdateLeadPayload = CreateLeadPayload;
@@ -120,6 +136,8 @@ interface SupabaseLead {
   source: string;
   notes: string;
   custom_fields: LeadCustomField[];
+  generated_messages: string[];
+  notification: boolean;
   created_at: string;
 }
 
@@ -152,6 +170,19 @@ interface SupabaseCampaign {
 
 interface SupabaseCampaignListResponse {
   campaigns: SupabaseCampaign[];
+}
+
+interface SupabaseLlmSettings {
+  provider: 'groq';
+  model: string | null;
+  apiKeyPreview: string | null;
+  isConfigured: boolean;
+  validatedAt: string | null;
+  updatedAt: string | null;
+}
+
+interface SupabaseLlmModelsResponse {
+  models: LlmModel[];
 }
 
 interface OkResponse {
@@ -189,6 +220,8 @@ function mapLead(data: SupabaseLead): Lead {
     source: data.source,
     notes: data.notes,
     customFields: data.custom_fields || [],
+    generatedMessages: data.generated_messages || [],
+    notification: data.notification || false,
     createdAt: data.created_at,
   };
 }
@@ -213,6 +246,17 @@ function mapCampaign(data: SupabaseCampaign): Campaign {
     generationPrompt: data.generation_prompt,
     createdAt: data.created_at,
     updatedAt: data.updated_at,
+  };
+}
+
+function mapLlmSettings(data: SupabaseLlmSettings): WorkspaceLlmSettings {
+  return {
+    provider: data.provider,
+    model: data.model || '',
+    apiKeyPreview: data.apiKeyPreview || '',
+    isConfigured: data.isConfigured,
+    validatedAt: data.validatedAt,
+    updatedAt: data.updatedAt,
   };
 }
 
@@ -304,6 +348,16 @@ export const leadService = {
     api
       .put<SupabaseLead>(`/workspace/${workspaceId}/leads/${leadId}/funnel`, { funnelId })
       .then((res) => ({ ...res, data: mapLead(res.data) })),
+
+  generateMessages: (workspaceId: string, leadId: string, campaignId: string) =>
+    api
+      .post<SupabaseLead>(`/workspace/${workspaceId}/leads/${leadId}/messages`, { campaignId })
+      .then((res) => ({ ...res, data: mapLead(res.data) })),
+
+  clearNotification: (workspaceId: string, leadId: string) =>
+    api
+      .put<SupabaseLead>(`/workspace/${workspaceId}/leads/${leadId}/notification`, { notification: false })
+      .then((res) => ({ ...res, data: mapLead(res.data) })),
 };
 
 export const funnelService = {
@@ -343,6 +397,23 @@ export const campaignService = {
 
   remove: (workspaceId: string, campaignId: string) =>
     api.delete<OkResponse>(`/workspace/${workspaceId}/campaigns/${campaignId}`),
+};
+
+export const llmSettingsService = {
+  get: (workspaceId: string) =>
+    api
+      .get<SupabaseLlmSettings>(`/workspace/${workspaceId}/llm`)
+      .then((res) => ({ ...res, data: mapLlmSettings(res.data) })),
+
+  listModels: (workspaceId: string, apiKey?: string) =>
+    api
+      .post<SupabaseLlmModelsResponse>(`/workspace/${workspaceId}/llm/models`, { apiKey })
+      .then((res) => ({ ...res, data: res.data.models })),
+
+  save: (workspaceId: string, data: { model: string; apiKey?: string }) =>
+    api
+      .put<SupabaseLlmSettings>(`/workspace/${workspaceId}/llm`, data)
+      .then((res) => ({ ...res, data: mapLlmSettings(res.data) })),
 };
 
 export default api;

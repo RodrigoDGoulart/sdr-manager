@@ -63,8 +63,21 @@ const campaignSchema = z.object({
   triggerFunnelId: z.union([z.uuid(), z.literal(''), z.null()]).optional().transform((value) => value || null),
 });
 
+const llmSettingsSchema = z.object({
+  model: z.string().trim().min(1),
+  apiKey: z.string().trim().optional(),
+});
+
+const llmModelsSchema = z.object({
+  apiKey: z.string().trim().optional(),
+});
+
 const moveLeadSchema = z.object({
   funnelId: z.uuid(),
+});
+
+const generateLeadMessagesSchema = z.object({
+  campaignId: z.uuid(),
 });
 
 const leadFieldTypeSchema = z.enum(['text', 'long_text', 'number', 'date']);
@@ -88,6 +101,344 @@ const leadSchema = z.object({
   notes: z.string().trim().min(1),
   customFields: z.array(customLeadFieldSchema).default([]),
 });
+
+const leadSelect = 'id,workspace_id,funnel_id,name,email,phone,company,role,source,notes,custom_fields,generated_messages,notification,created_at';
+const leadMessagePrompt = `Voce e um assistente de SDR especializado em criar mensagens comerciais personalizadas para leads.
+
+Sua tarefa e gerar exatamente 3 sugestoes de mensagens para abordagem comercial, considerando:
+- os dados do lead;
+- o contexto da campanha;
+- as instrucoes especificas de geracao.
+
+As mensagens devem ser naturais, personalizadas e uteis. Nao invente informacoes que nao estejam disponiveis. Se algum dado do lead estiver ausente, simplesmente nao use esse dado.
+
+Regras:
+- Gere exatamente 3 mensagens.
+- Cada mensagem deve ser diferente em abordagem, mas manter o mesmo objetivo.
+- Nao use tom robotico ou generico.
+- Nao mencione que a mensagem foi gerada por IA.
+- Nao inclua explicacoes fora do JSON.
+- Nao use campos vazios ou desconhecidos como se fossem informacao real.
+- Se houver observacoes do lead, use apenas se forem relevantes para personalizar a abordagem.
+
+Dados do lead:
+Nome: {{lead.name}}
+Email: {{lead.email}}
+Telefone: {{lead.phone}}
+Empresa: {{lead.company}}
+Cargo: {{lead.role}}
+Origem do lead: {{lead.source}}
+Observacoes: {{lead.notes}}
+
+Campos personalizados:
+{{custom_fields}}
+
+Contexto da campanha:
+{{campaign.context}}
+
+Prompt de geracao da campanha:
+{{campaign.generation_prompt}}
+
+Retorne somente neste formato JSON:
+
+{
+  "messages": [
+    {
+      "title": "Opcao 1",
+      "message": "..."
+    },
+    {
+      "title": "Opcao 2",
+      "message": "..."
+    },
+    {
+      "title": "Opcao 3",
+      "message": "..."
+    }
+  ]
+}`;
+
+function wait(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function buildGeneratedMessages(
+  lead: { name: string; company: string; role: string },
+  campaign: { name: string },
+) {
+  return [
+    `Oi, ${lead.name}. Vi que você atua como ${lead.role} na ${lead.company} e acredito que a campanha ${campaign.name} pode abrir uma boa conversa sobre prioridades atuais do seu time. Podemos falar rapidamente esta semana?`,
+    `Olá, ${lead.name}. Estou entrando em contato por causa da campanha ${campaign.name}. Pelo contexto da ${lead.company}, acredito que existe uma oportunidade de simplificar o processo comercial e gerar mais previsibilidade. Faz sentido conversarmos por alguns minutos?`,
+    `${lead.name}, tudo bem? Separei uma abordagem direta ligada a campanha ${campaign.name}, pensando no seu papel como ${lead.role}. A ideia é entender se existe espaço para melhorar a rotina do time sem adicionar complexidade. Posso te enviar alguns horários?`,
+  ];
+}
+
+async function loadLeadMessagePrompt() {
+  return leadMessagePrompt;
+}
+
+function stringifyPromptValue(value: unknown) {
+  if (value === null || value === undefined) return '';
+  return String(value).trim();
+}
+
+function formatCustomFields(customFields: unknown) {
+  if (!Array.isArray(customFields) || customFields.length === 0) {
+    return 'Nenhum campo personalizado informado.';
+  }
+
+  const rows = customFields
+    .map((field) => {
+      if (!field || typeof field !== 'object') return '';
+      const item = field as { label?: unknown; value?: unknown };
+      const label = stringifyPromptValue(item.label);
+      const value = stringifyPromptValue(item.value);
+      if (!label || !value) return '';
+      return `- ${label}: ${value}`;
+    })
+    .filter(Boolean);
+
+  return rows.length > 0 ? rows.join('\n') : 'Nenhum campo personalizado informado.';
+}
+
+async function renderLeadMessagePrompt(
+  lead: {
+    name?: unknown;
+    email?: unknown;
+    phone?: unknown;
+    company?: unknown;
+    role?: unknown;
+    source?: unknown;
+    notes?: unknown;
+    custom_fields?: unknown;
+  },
+  campaign: {
+    context?: unknown;
+    generation_prompt?: unknown;
+  },
+) {
+  const prompt = await loadLeadMessagePrompt();
+  const replacements: Record<string, string> = {
+    '{{lead.name}}': stringifyPromptValue(lead.name),
+    '{{lead.email}}': stringifyPromptValue(lead.email),
+    '{{lead.phone}}': stringifyPromptValue(lead.phone),
+    '{{lead.company}}': stringifyPromptValue(lead.company),
+    '{{lead.role}}': stringifyPromptValue(lead.role),
+    '{{lead.source}}': stringifyPromptValue(lead.source),
+    '{{lead.notes}}': stringifyPromptValue(lead.notes),
+    '{{custom_fields}}': formatCustomFields(lead.custom_fields),
+    '{{campaign.context}}': stringifyPromptValue(campaign.context),
+    '{{campaign.generation_prompt}}': stringifyPromptValue(campaign.generation_prompt),
+  };
+
+  return Object.entries(replacements).reduce(
+    (current, [placeholder, value]) => current.replaceAll(placeholder, value),
+    prompt,
+  );
+}
+
+function parseLeadMessages(content: string) {
+  const trimmed = content.trim();
+  const start = trimmed.indexOf('{');
+  const end = trimmed.lastIndexOf('}');
+  const jsonText = start >= 0 && end >= start ? trimmed.slice(start, end + 1) : trimmed;
+  const payload = JSON.parse(jsonText) as {
+    messages?: Array<{ message?: unknown }>;
+  };
+  const messages = (payload.messages || [])
+    .map((item) => stringifyPromptValue(item.message))
+    .filter(Boolean)
+    .slice(0, 3);
+
+  if (messages.length !== 3) {
+    throw new Error('A LLM nao retornou exatamente 3 mensagens.');
+  }
+
+  return messages;
+}
+
+async function generateLeadMessagesWithGroq(apiKey: string, model: string, prompt: string) {
+  const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      model,
+      messages: [{ role: 'user', content: prompt }],
+      temperature: 0.7,
+      max_completion_tokens: 1200,
+      response_format: { type: 'json_object' },
+    }),
+  });
+
+  if (!response.ok) {
+    return { ok: false as const, messages: [] as string[] };
+  }
+
+  const payload = await response.json() as {
+    choices?: Array<{ message?: { content?: string } }>;
+  };
+  const content = payload.choices?.[0]?.message?.content;
+  if (!content) throw new Error('A LLM nao retornou conteudo.');
+
+  return { ok: true as const, messages: parseLeadMessages(content) };
+}
+
+async function generateLeadMessages(
+  llmSetting: { model: string; api_key_ciphertext: string },
+  lead: {
+    name?: unknown;
+    email?: unknown;
+    phone?: unknown;
+    company?: unknown;
+    role?: unknown;
+    source?: unknown;
+    notes?: unknown;
+    custom_fields?: unknown;
+  },
+  campaign: {
+    context?: unknown;
+    generation_prompt?: unknown;
+  },
+) {
+  const apiKey = await decryptApiKey(llmSetting.api_key_ciphertext);
+  const prompt = await renderLeadMessagePrompt(lead, campaign);
+  const result = await generateLeadMessagesWithGroq(apiKey, llmSetting.model, prompt);
+
+  if (!result.ok) {
+    throw new Error('Nao foi possivel gerar mensagens com a LLM configurada.');
+  }
+
+  return result.messages;
+}
+
+function maskApiKey(apiKey: string) {
+  if (apiKey.length <= 10) return `${apiKey.slice(0, 3)}...${apiKey.slice(-2)}`;
+  return `${apiKey.slice(0, 7)}...${apiKey.slice(-4)}`;
+}
+
+function bytesToBase64(bytes: Uint8Array) {
+  let binary = '';
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary);
+}
+
+function base64ToBytes(value: string) {
+  const binary = atob(value);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+  return bytes;
+}
+
+async function getLlmEncryptionKey() {
+  const secret = Deno.env.get('LLM_ENCRYPTION_KEY') || env('SUPABASE_SERVICE_ROLE_KEY');
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(secret));
+  return crypto.subtle.importKey('raw', digest, 'AES-GCM', false, ['encrypt', 'decrypt']);
+}
+
+async function encryptApiKey(apiKey: string) {
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const key = await getLlmEncryptionKey();
+  const ciphertext = await crypto.subtle.encrypt(
+    { name: 'AES-GCM', iv },
+    key,
+    new TextEncoder().encode(apiKey),
+  );
+
+  return `${bytesToBase64(iv)}.${bytesToBase64(new Uint8Array(ciphertext))}`;
+}
+
+async function decryptApiKey(encrypted: string) {
+  const [ivBase64, ciphertextBase64] = encrypted.split('.');
+  if (!ivBase64 || !ciphertextBase64) throw new Error('Invalid encrypted API key');
+
+  const key = await getLlmEncryptionKey();
+  const plaintext = await crypto.subtle.decrypt(
+    { name: 'AES-GCM', iv: base64ToBytes(ivBase64) },
+    key,
+    base64ToBytes(ciphertextBase64),
+  );
+
+  return new TextDecoder().decode(plaintext);
+}
+
+async function fetchGroqModels(apiKey: string) {
+  const response = await fetch('https://api.groq.com/openai/v1/models', {
+    method: 'GET',
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
+    },
+  });
+
+  if (!response.ok) {
+    return {
+      ok: false,
+      status: response.status,
+      models: [] as Array<{ id: string; ownedBy?: string }>,
+    };
+  }
+
+  const payload = await response.json() as {
+    data?: Array<{ id?: string; owned_by?: string }>;
+  };
+  const models = (payload.data || [])
+    .filter((model) => Boolean(model.id))
+    .map((model) => ({ id: String(model.id), ownedBy: model.owned_by }))
+    .sort((a, b) => a.id.localeCompare(b.id));
+
+  return { ok: true, status: response.status, models };
+}
+
+async function getWorkspaceLlmSetting(supabase: SupabaseClient, workspaceId: string) {
+  const { data, error } = await supabase
+    .from('workspace_llm_settings')
+    .select('workspace_id,provider,model,api_key_ciphertext,api_key_preview,validated_at,updated_at')
+    .eq('workspace_id', workspaceId)
+    .maybeSingle();
+
+  if (error) throw error;
+  return data;
+}
+
+function mapLlmSettingResponse(setting: {
+  provider?: string | null;
+  model?: string | null;
+  api_key_preview?: string | null;
+  validated_at?: string | null;
+  updated_at?: string | null;
+} | null) {
+  return {
+    provider: 'groq',
+    model: setting?.model || null,
+    apiKeyPreview: setting?.api_key_preview || null,
+    isConfigured: Boolean(setting?.model && setting?.api_key_preview),
+    validatedAt: setting?.validated_at || null,
+    updatedAt: setting?.updated_at || null,
+  };
+}
+
+async function getTriggerCampaign(
+  supabase: SupabaseClient,
+  workspaceId: string,
+  funnelId: string,
+) {
+  const { data, error } = await supabase
+    .from('campaigns')
+    .select('id,name,context,generation_prompt')
+    .eq('workspace_id', workspaceId)
+    .eq('trigger_funnel_id', funnelId)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) throw error;
+  return data;
+}
 
 function env(name: string) {
   const value = Deno.env.get(name);
@@ -388,6 +739,103 @@ Deno.serve(async (req) => {
         }
       }
 
+      if (resource === 'workspace' && parts.length === 3 && parts[2] === 'llm') {
+        const workspaceId = subresource;
+        const adminClient = createAdminClient();
+
+        const { data: workspace, error: workspaceError } = await supabase
+          .from('workspaces')
+          .select('id')
+          .eq('id', workspaceId)
+          .eq('owner_id', authUserId)
+          .maybeSingle();
+
+        if (workspaceError) return jsonResponse({ error: workspaceError.message }, 400);
+        if (!workspace) return jsonResponse({ error: 'Workspace não encontrado' }, 404);
+
+        if (req.method === 'GET') {
+          const setting = await getWorkspaceLlmSetting(supabase, workspaceId);
+          return jsonResponse(mapLlmSettingResponse(setting));
+        }
+
+        if (req.method === 'PUT') {
+          const payload = llmSettingsSchema.parse(await readJson(req));
+          const existing = await getWorkspaceLlmSetting(supabase, workspaceId);
+          const apiKey = payload.apiKey || (existing ? await decryptApiKey(existing.api_key_ciphertext) : '');
+
+          if (!apiKey) {
+            return jsonResponse({ error: 'Informe uma chave de API Groq.' }, 400);
+          }
+
+          const modelsResponse = await fetchGroqModels(apiKey);
+          if (!modelsResponse.ok) {
+            return jsonResponse({ error: 'Chave de API Groq inválida.' }, 400);
+          }
+
+          const hasModel = modelsResponse.models.some((model) => model.id === payload.model);
+          if (!hasModel) {
+            return jsonResponse({ error: 'Modelo não disponível para esta chave Groq.' }, 400);
+          }
+
+          const encryptedApiKey = payload.apiKey
+            ? await encryptApiKey(apiKey)
+            : existing!.api_key_ciphertext;
+          const apiKeyPreview = payload.apiKey
+            ? maskApiKey(apiKey)
+            : existing!.api_key_preview;
+          const now = new Date().toISOString();
+
+          const { data, error } = await adminClient
+            .from('workspace_llm_settings')
+            .upsert({
+              workspace_id: workspaceId,
+              provider: 'groq',
+              model: payload.model,
+              api_key_ciphertext: encryptedApiKey,
+              api_key_preview: apiKeyPreview,
+              validated_at: now,
+              updated_at: now,
+            }, { onConflict: 'workspace_id' })
+            .select('provider,model,api_key_preview,validated_at,updated_at')
+            .single();
+
+          if (error) return jsonResponse({ error: error.message }, 400);
+
+          return jsonResponse(mapLlmSettingResponse(data));
+        }
+      }
+
+      if (resource === 'workspace' && parts.length === 4 && parts[2] === 'llm' && parts[3] === 'models') {
+        const workspaceId = subresource;
+
+        const { data: workspace, error: workspaceError } = await supabase
+          .from('workspaces')
+          .select('id')
+          .eq('id', workspaceId)
+          .eq('owner_id', authUserId)
+          .maybeSingle();
+
+        if (workspaceError) return jsonResponse({ error: workspaceError.message }, 400);
+        if (!workspace) return jsonResponse({ error: 'Workspace não encontrado' }, 404);
+
+        if (req.method === 'POST') {
+          const payload = llmModelsSchema.parse(await readJson(req));
+          const existing = await getWorkspaceLlmSetting(supabase, workspaceId);
+          const apiKey = payload.apiKey || (existing ? await decryptApiKey(existing.api_key_ciphertext) : '');
+
+          if (!apiKey) {
+            return jsonResponse({ error: 'Informe uma chave de API Groq para listar modelos.' }, 400);
+          }
+
+          const modelsResponse = await fetchGroqModels(apiKey);
+          if (!modelsResponse.ok) {
+            return jsonResponse({ error: 'Chave de API Groq inválida.' }, 400);
+          }
+
+          return jsonResponse({ models: modelsResponse.models });
+        }
+      }
+
       if (resource === 'workspace' && parts.length === 3 && parts[2] === 'funnels') {
         const workspaceId = subresource;
 
@@ -547,7 +995,8 @@ Deno.serve(async (req) => {
               .maybeSingle();
 
             if (funnelError) return jsonResponse({ error: funnelError.message }, 400);
-            if (!funnel) return jsonResponse({ error: 'Funil nÃ£o encontrado' }, 404);
+        if (!funnel) return jsonResponse({ error: 'Funil nÃ£o encontrado' }, 404);
+
           }
 
           const { data, error } = await supabase
@@ -660,7 +1109,7 @@ Deno.serve(async (req) => {
         if (req.method === 'GET') {
           const { data, error } = await supabase
             .from('leads')
-            .select('id,workspace_id,funnel_id,name,email,phone,company,role,source,notes,custom_fields,created_at')
+            .select(leadSelect)
             .eq('workspace_id', workspaceId)
             .order('created_at', { ascending: false });
 
@@ -684,6 +1133,30 @@ Deno.serve(async (req) => {
             .maybeSingle();
 
           if (targetFunnelError) return jsonResponse({ error: targetFunnelError.message }, 400);
+          const triggerCampaign = targetFunnel
+            ? await getTriggerCampaign(supabase, workspaceId, targetFunnel.id)
+            : null;
+          const llmSetting = triggerCampaign
+            ? await getWorkspaceLlmSetting(supabase, workspaceId)
+            : null;
+          const generatedMessages = triggerCampaign
+            && llmSetting?.model
+            && llmSetting?.api_key_ciphertext
+            ? await generateLeadMessages(
+              llmSetting,
+              {
+                name: lead.name,
+                email: lead.email,
+                phone: lead.phone,
+                company: lead.company,
+                role: lead.role,
+                source: lead.source,
+                notes: lead.notes,
+                custom_fields: lead.customFields,
+              },
+              triggerCampaign,
+            )
+            : [];
           if (!targetFunnel) return jsonResponse({ error: 'Funil não encontrado' }, 404);
 
           const { data, error } = await supabase
@@ -699,8 +1172,10 @@ Deno.serve(async (req) => {
               source: lead.source,
               notes: lead.notes,
               custom_fields: lead.customFields,
+              generated_messages: generatedMessages,
+              notification: Boolean(triggerCampaign && llmSetting?.model && llmSetting?.api_key_ciphertext),
             })
-            .select('id,workspace_id,funnel_id,name,email,phone,company,role,source,notes,custom_fields,created_at')
+            .select(leadSelect)
             .single();
 
           if (error) return jsonResponse({ error: error.message }, 400);
@@ -740,7 +1215,7 @@ Deno.serve(async (req) => {
             })
             .eq('id', leadId)
             .eq('workspace_id', workspaceId)
-            .select('id,workspace_id,funnel_id,name,email,phone,company,role,source,notes,custom_fields,created_at')
+            .select(leadSelect)
             .maybeSingle();
 
           if (error) return jsonResponse({ error: error.message }, 400);
@@ -791,18 +1266,132 @@ Deno.serve(async (req) => {
         if (funnelError) return jsonResponse({ error: funnelError.message }, 400);
         if (!funnel) return jsonResponse({ error: 'Funil não encontrado' }, 404);
 
-        const { data, error } = await adminClient
+        const { data: existingLead, error: existingLeadError } = await supabase
           .from('leads')
-          .update({ funnel_id: funnelId })
+          .select('id,name,email,phone,company,role,source,notes,custom_fields')
           .eq('id', leadId)
           .eq('workspace_id', workspaceId)
-          .select('id,workspace_id,funnel_id,name,email,phone,company,role,source,notes,custom_fields,created_at')
+          .maybeSingle();
+
+        if (existingLeadError) return jsonResponse({ error: existingLeadError.message }, 400);
+        if (!existingLead) return jsonResponse({ error: 'Lead nÃ£o encontrado' }, 404);
+
+        const triggerCampaign = await getTriggerCampaign(supabase, workspaceId, funnelId);
+        const llmSetting = triggerCampaign
+          ? await getWorkspaceLlmSetting(supabase, workspaceId)
+          : null;
+        const updatePayload: Json = { funnel_id: funnelId };
+
+        if (triggerCampaign && llmSetting?.model && llmSetting?.api_key_ciphertext) {
+          updatePayload.generated_messages = await generateLeadMessages(
+            llmSetting,
+            existingLead,
+            triggerCampaign,
+          );
+          updatePayload.notification = true;
+        }
+
+        const { data, error } = await adminClient
+          .from('leads')
+          .update(updatePayload)
+          .eq('id', leadId)
+          .eq('workspace_id', workspaceId)
+          .select(leadSelect)
           .maybeSingle();
 
         if (error) return jsonResponse({ error: error.message }, 400);
         if (!data) return jsonResponse({ error: 'Lead não encontrado' }, 404);
 
         return jsonResponse(data);
+      }
+
+      if (resource === 'workspace' && parts.length === 5 && parts[2] === 'leads' && parts[4] === 'messages') {
+        const workspaceId = subresource;
+        const leadId = parts[3];
+        const { campaignId } = generateLeadMessagesSchema.parse(await readJson(req));
+        const adminClient = createAdminClient();
+
+        const { data: workspace, error: workspaceError } = await supabase
+          .from('workspaces')
+          .select('id')
+          .eq('id', workspaceId)
+          .eq('owner_id', authUserId)
+          .maybeSingle();
+
+        if (workspaceError) return jsonResponse({ error: workspaceError.message }, 400);
+        if (!workspace) return jsonResponse({ error: 'Workspace nÃ£o encontrado' }, 404);
+
+        const llmSetting = await getWorkspaceLlmSetting(supabase, workspaceId);
+        if (!llmSetting?.model || !llmSetting?.api_key_ciphertext) {
+          return jsonResponse({ error: 'Configure a LLM do workspace antes de gerar mensagens.' }, 400);
+        }
+
+        const { data: lead, error: leadError } = await supabase
+          .from('leads')
+          .select('id,name,email,phone,company,role,source,notes,custom_fields')
+          .eq('id', leadId)
+          .eq('workspace_id', workspaceId)
+          .maybeSingle();
+
+        if (leadError) return jsonResponse({ error: leadError.message }, 400);
+        if (!lead) return jsonResponse({ error: 'Lead nÃ£o encontrado' }, 404);
+
+        const { data: campaign, error: campaignError } = await supabase
+          .from('campaigns')
+          .select('id,name,context,generation_prompt')
+          .eq('id', campaignId)
+          .eq('workspace_id', workspaceId)
+          .maybeSingle();
+
+        if (campaignError) return jsonResponse({ error: campaignError.message }, 400);
+        if (!campaign) return jsonResponse({ error: 'Campanha nÃ£o encontrada' }, 404);
+
+        const generatedMessages = await generateLeadMessages(llmSetting, lead, campaign);
+
+
+        const { data, error } = await adminClient
+          .from('leads')
+          .update({ generated_messages: generatedMessages })
+          .eq('id', leadId)
+          .eq('workspace_id', workspaceId)
+          .select(leadSelect)
+          .maybeSingle();
+
+        if (error) return jsonResponse({ error: error.message }, 400);
+        if (!data) return jsonResponse({ error: 'Lead nÃ£o encontrado' }, 404);
+
+        return jsonResponse(data);
+      }
+
+      if (resource === 'workspace' && parts.length === 5 && parts[2] === 'leads' && parts[4] === 'notification') {
+        const workspaceId = subresource;
+        const leadId = parts[3];
+        const adminClient = createAdminClient();
+
+        const { data: workspace, error: workspaceError } = await supabase
+          .from('workspaces')
+          .select('id')
+          .eq('id', workspaceId)
+          .eq('owner_id', authUserId)
+          .maybeSingle();
+
+        if (workspaceError) return jsonResponse({ error: workspaceError.message }, 400);
+        if (!workspace) return jsonResponse({ error: 'Workspace nÃ£o encontrado' }, 404);
+
+        if (req.method === 'PUT') {
+          const { data, error } = await adminClient
+            .from('leads')
+            .update({ notification: false })
+            .eq('id', leadId)
+            .eq('workspace_id', workspaceId)
+            .select(leadSelect)
+            .maybeSingle();
+
+          if (error) return jsonResponse({ error: error.message }, 400);
+          if (!data) return jsonResponse({ error: 'Lead nÃ£o encontrado' }, 404);
+
+          return jsonResponse(data);
+        }
       }
     }
 

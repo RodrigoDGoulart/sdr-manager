@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import {
+  Alert,
   Button,
   CircularProgress,
   Dialog,
@@ -32,6 +33,7 @@ interface CampaignDialogProps {
   error: string;
   funnels: Funnel[];
   initialCampaign?: CreateCampaignPayload | null;
+  llmConfigured: boolean;
   onClose: () => void;
   onSubmit: (campaign: CreateCampaignPayload) => Promise<void>;
 }
@@ -43,6 +45,7 @@ export default function CampaignDialog({
   error,
   funnels,
   initialCampaign,
+  llmConfigured,
   onClose,
   onSubmit,
 }: CampaignDialogProps) {
@@ -84,6 +87,11 @@ export default function CampaignDialog({
       <DialogTitle>{title}</DialogTitle>
       <DialogContent>
         <Stack spacing={2} sx={{ pt: 1 }}>
+          {!llmConfigured && (
+            <Alert severity="warning">
+              Este workspace ainda não possui LLM Groq configurada. As campanhas podem ser salvas, mas a geração automática e manual de mensagens ficará indisponível até a configuração.
+            </Alert>
+          )}
           <TextField
             label="Nome da campanha"
             value={campaign.name}

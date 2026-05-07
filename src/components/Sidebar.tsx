@@ -24,6 +24,7 @@ import AddIcon from '@mui/icons-material/Add';
 import AccountCircleIcon from '@mui/icons-material/AccountCircle';
 import PeopleAltIcon from '@mui/icons-material/PeopleAlt';
 import CampaignIcon from '@mui/icons-material/Campaign';
+import SettingsIcon from '@mui/icons-material/Settings';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/useAuth';
 import { useWorkspaces } from '../contexts/useWorkspaces';
@@ -149,7 +150,11 @@ export default function Sidebar() {
       await workspaceService.remove(activeWsId!);
       removeWorkspace(activeWsId!);
       setDeleteWsOpen(false);
-      if (location.pathname === `/workspace/${activeWsId}` || location.pathname === `/workspace/${activeWsId}/campaigns`) {
+      if (
+        location.pathname === `/workspace/${activeWsId}` ||
+        location.pathname === `/workspace/${activeWsId}/campaigns` ||
+        location.pathname === `/workspace/${activeWsId}/settings`
+      ) {
         navigate('/');
       }
     } catch {
@@ -234,9 +239,11 @@ export default function Sidebar() {
           {workspaces.map((ws) => {
             const leadsPath = `/workspace/${ws.id}`;
             const campaignsPath = `/workspace/${ws.id}/campaigns`;
+            const settingsPath = `/workspace/${ws.id}/settings`;
             const isLeadsActive = location.pathname === leadsPath;
             const isCampaignsActive = location.pathname === campaignsPath;
-            const isActive = isLeadsActive || isCampaignsActive;
+            const isSettingsActive = location.pathname === settingsPath;
+            const isActive = isLeadsActive || isCampaignsActive || isSettingsActive;
             return (
               <Box key={ws.id}>
                 <ListItemButton
@@ -300,6 +307,24 @@ export default function Sidebar() {
                       <ListItemText
                         primary="Campanhas"
                         slotProps={{ primary: { variant: 'body2', fontWeight: isCampaignsActive ? 600 : 400 } }}
+                      />
+                    </ListItemButton>
+                    <ListItemButton
+                      onClick={() => navigate(settingsPath)}
+                      selected={isSettingsActive}
+                      sx={{
+                        borderRadius: 1,
+                        py: 0.35,
+                        color: 'primary.contrastText',
+                        opacity: 0.9,
+                        '&:hover': { bgcolor: 'rgba(255,255,255,0.1)' },
+                        '&.Mui-selected': { bgcolor: 'rgba(255,255,255,0.12)', '&:hover': { bgcolor: 'rgba(255,255,255,0.18)' } },
+                      }}
+                    >
+                      <SettingsIcon sx={{ fontSize: 15, mr: 1, opacity: 0.75 }} />
+                      <ListItemText
+                        primary="Configurações"
+                        slotProps={{ primary: { variant: 'body2', fontWeight: isSettingsActive ? 600 : 400 } }}
                       />
                     </ListItemButton>
                   </Box>

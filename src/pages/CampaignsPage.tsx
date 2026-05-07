@@ -28,6 +28,7 @@ import CampaignDialog from '../components/campaigns/CampaignDialog';
 import {
   campaignService,
   funnelService,
+  llmSettingsService,
   workspaceService,
   type Campaign,
   type CreateCampaignPayload,
@@ -45,6 +46,7 @@ export default function CampaignsPage() {
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [funnels, setFunnels] = useState<Funnel[]>([]);
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
+  const [llmConfigured, setLlmConfigured] = useState(false);
   const [loading, setLoading] = useState(true);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [dialogVersion, setDialogVersion] = useState(0);
@@ -83,12 +85,14 @@ export default function CampaignsPage() {
       workspaceService.getById(id),
       funnelService.list(id),
       campaignService.list(id),
+      llmSettingsService.get(id),
     ])
-      .then(([workspaceRes, funnelsRes, campaignsRes]) => {
+      .then(([workspaceRes, funnelsRes, campaignsRes, llmSettingsRes]) => {
         if (ignore) return;
         setWorkspace(workspaceRes.data);
         setFunnels(funnelsRes.data);
         setCampaigns(campaignsRes.data);
+        setLlmConfigured(llmSettingsRes.data.isConfigured);
       })
       .catch(() => {
         if (!ignore) navigate('/');
@@ -360,6 +364,7 @@ export default function CampaignsPage() {
         error={campaignError}
         funnels={funnels}
         initialCampaign={editingPayload}
+        llmConfigured={llmConfigured}
         onClose={() => {
           setDialogOpen(false);
           setEditingCampaign(null);

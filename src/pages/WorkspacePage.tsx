@@ -27,9 +27,12 @@ import Sidebar from "../components/Sidebar";
 import AddLeadDialog from "../components/leads/AddLeadDialog";
 import ViewLeadDialog from "../components/leads/ViewLeadDialog";
 import {
+  campaignService,
   funnelService,
   leadService,
+  llmSettingsService,
   workspaceService,
+  type Campaign,
   type CreateLeadPayload,
   type Funnel,
   type Lead,
@@ -46,6 +49,8 @@ export default function WorkspacePage() {
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [leads, setLeads] = useState<Lead[]>([]);
   const [funnels, setFunnels] = useState<Funnel[]>([]);
+  const [campaigns, setCampaigns] = useState<Campaign[]>([]);
+  const [llmConfigured, setLlmConfigured] = useState(false);
   const [loading, setLoading] = useState(true);
   const [leadsLoading, setLeadsLoading] = useState(true);
   const [funnelsLoading, setFunnelsLoading] = useState(true);
@@ -62,6 +67,7 @@ export default function WorkspacePage() {
   const [createLeadError, setCreateLeadError] = useState("");
   const [deleteLeadLoading, setDeleteLeadLoading] = useState(false);
   const [deleteLeadError, setDeleteLeadError] = useState("");
+  const [generatingMessages, setGeneratingMessages] = useState(false);
   const [toast, setToast] = useState("");
   const [toastSeverity, setToastSeverity] = useState<"success" | "error">(
     "success",
@@ -103,6 +109,22 @@ export default function WorkspacePage() {
       .then((res) => setFunnels(res.data))
       .catch(() => setFunnels([]))
       .finally(() => setFunnelsLoading(false));
+  }, [id]);
+
+  useEffect(() => {
+    if (!id) return;
+    campaignService
+      .list(id)
+      .then((res) => setCampaigns(res.data))
+      .catch(() => setCampaigns([]));
+  }, [id]);
+
+  useEffect(() => {
+    if (!id) return;
+    llmSettingsService
+      .get(id)
+      .then((res) => setLlmConfigured(res.data.isConfigured))
+      .catch(() => setLlmConfigured(false));
   }, [id]);
 
   useEffect(() => () => stopKanbanAutoScroll(), []);
@@ -194,6 +216,77 @@ export default function WorkspacePage() {
     } finally {
       setDeleteLeadLoading(false);
     }
+  }
+
+  async function handleGenerateMessages(campaignId: string) {
+    if (!id || !selectedLead) return;
+    setGeneratingMessages(true);
+
+    try {
+      const res = await leadService.generateMessages(id, selectedLead.id, campaignId);
+      setLeads((current) =>
+        current.map((lead) => (lead.id === res.data.id ? res.data : lead)),
+      );
+      setSelectedLead(res.data);
+      showSuccess("Mensagens geradas com sucesso.");
+    } catch (err) {
+      const axiosErr = err as AxiosError<ApiError>;
+      showError(
+        axiosErr.response?.data?.error ||
+          "Não foi possível gerar as mensagens. Tente novamente.",
+      );
+    } finally {
+      setGeneratingMessages(false);
+    }
+  }
+
+  async function handleCopyMessage(message: string) {
+    try {
+      await navigator.clipboard.writeText(message);
+      showSuccess("Mensagem copiada para a área de transferência.");
+    } catch {
+      showError("Não foi possível copiar a mensagem.");
+    }
+  }
+
+  async function handleSendMessage() {
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+    showSuccess("Mensagem enviada com sucesso.");
+  }
+
+  function openLeadDialog(lead: Lead) {
+    setSelectedLead(lead);
+
+    if (!id || !lead.notification) return;
+
+    setLeads((current) =>
+      current.map((item) =>
+        item.id === lead.id ? { ...item, notification: false } : item,
+      ),
+    );
+    setSelectedLead({ ...lead, notification: false });
+
+    leadService
+      .clearNotification(id, lead.id)
+      .then((res) => {
+        setLeads((current) =>
+          current.map((item) => (item.id === res.data.id ? res.data : item)),
+        );
+        setSelectedLead((current) =>
+          current?.id === res.data.id ? res.data : current,
+        );
+      })
+      .catch(() => {
+        setLeads((current) =>
+          current.map((item) =>
+            item.id === lead.id ? { ...item, notification: true } : item,
+          ),
+        );
+        setSelectedLead((current) =>
+          current?.id === lead.id ? { ...current, notification: true } : current,
+        );
+        showError("Não foi possível limpar a notificação do lead.");
+      });
   }
 
   async function handleAddFunnel() {
@@ -593,16 +686,33 @@ export default function WorkspacePage() {
                               opacity: draggingLead?.id === lead.id ? 0.55 : 1,
                             }}
                           >
-                            <CardActionArea
-                              onClick={() => setSelectedLead(lead)}
-                            >
+                            <CardActionArea onClick={() => openLeadDialog(lead)}>
                               <CardContent
-                                sx={{ p: 1.5, "&:last-child": { pb: 1.5 } }}
+                                sx={{
+                                  p: 1.5,
+                                  position: "relative",
+                                  "&:last-child": { pb: 1.5 },
+                                }}
                               >
+                                {lead.notification && (
+                                  <Box
+                                    aria-label="Lead com nova mensagem gerada"
+                                    sx={{
+                                      position: "absolute",
+                                      top: 10,
+                                      right: 10,
+                                      width: 10,
+                                      height: 10,
+                                      borderRadius: "50%",
+                                      bgcolor: "error.main",
+                                      boxShadow: "0 0 0 3px rgba(239, 68, 68, 0.16)",
+                                    }}
+                                  />
+                                )}
                                 <Typography
                                   variant="subtitle2"
                                   color="text.primary"
-                                  sx={{ fontWeight: 700, lineHeight: 1.25 }}
+                                  sx={{ fontWeight: 700, lineHeight: 1.25, pr: lead.notification ? 2 : 0 }}
                                 >
                                   {lead.name}
                                 </Typography>
@@ -724,6 +834,9 @@ export default function WorkspacePage() {
       <ViewLeadDialog
         open={Boolean(selectedLead) && !editingLead && !deleteConfirmOpen}
         lead={selectedLead}
+        campaigns={campaigns}
+        generatingMessages={generatingMessages}
+        llmConfigured={llmConfigured}
         onClose={() => setSelectedLead(null)}
         onEdit={() => {
           if (selectedLead) setEditingLead(selectedLead);
@@ -732,6 +845,9 @@ export default function WorkspacePage() {
           setDeleteLeadError("");
           setDeleteConfirmOpen(true);
         }}
+        onGenerateMessages={handleGenerateMessages}
+        onCopyMessage={handleCopyMessage}
+        onSendMessage={handleSendMessage}
       />
       <Dialog
         open={deleteConfirmOpen}

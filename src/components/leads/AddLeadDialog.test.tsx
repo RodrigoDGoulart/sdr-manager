@@ -4,12 +4,16 @@ import { describe, expect, it, vi } from 'vitest';
 import AddLeadDialog from './AddLeadDialog';
 import type { CreateLeadPayload } from '../../services/api';
 
-function renderDialog(onSubmit = vi.fn<(lead: CreateLeadPayload) => Promise<void>>().mockResolvedValue(undefined)) {
+function renderDialog(
+  onSubmit = vi.fn<(lead: CreateLeadPayload) => Promise<void>>().mockResolvedValue(undefined),
+  requiredFields: string[] = [],
+) {
   render(
     <AddLeadDialog
       open
       loading={false}
       error=""
+      requiredFields={requiredFields}
       onClose={vi.fn()}
       onSubmit={onSubmit}
     />,
@@ -18,37 +22,37 @@ function renderDialog(onSubmit = vi.fn<(lead: CreateLeadPayload) => Promise<void
   return { onSubmit };
 }
 
-function fillRequiredLeadFields() {
+function fillLeadFields() {
   fireEvent.change(screen.getByLabelText(/nome/i), { target: { value: 'Maria Souza' } });
   fireEvent.change(screen.getByLabelText(/e-mail/i), { target: { value: 'maria@empresa.com' } });
   fireEvent.change(screen.getByLabelText(/telefone/i), { target: { value: '11999999999' } });
   fireEvent.change(screen.getByLabelText(/empresa/i), { target: { value: 'Acme' } });
   fireEvent.change(screen.getByLabelText(/cargo/i), { target: { value: 'Diretora' } });
   fireEvent.change(screen.getByLabelText(/origem do lead/i), { target: { value: 'LinkedIn' } });
-  fireEvent.change(screen.getByLabelText(/observações/i), { target: { value: 'Lead pediu contato pela manhã.' } });
+  fireEvent.change(screen.getByLabelText(/observacoes/i), { target: { value: 'Lead pediu contato pela manha.' } });
 }
 
 describe('AddLeadDialog', () => {
-  it('validates required lead fields before submit', async () => {
+  it('validates configured required lead fields before submit', async () => {
     const user = userEvent.setup();
-    const { onSubmit } = renderDialog();
+    const { onSubmit } = renderDialog(undefined, ['name']);
 
     await user.click(screen.getByRole('button', { name: /salvar/i }));
 
-    expect(screen.getByText(/preencha todos os campos obrigatórios/i)).toBeInTheDocument();
+    expect(screen.getByText(/preencha os campos obrigatorios/i)).toBeInTheDocument();
     expect(onSubmit).not.toHaveBeenCalled();
   });
 
   it('submits lead with custom additional information', async () => {
     const { onSubmit } = renderDialog();
     const user = userEvent.setup();
-    fillRequiredLeadFields();
+    fillLeadFields();
 
-    await user.click(screen.getByRole('button', { name: /adicionar informação/i }));
-    fireEvent.change(screen.getByLabelText(/rótulo/i), { target: { value: 'Quantidade de unidades' } });
+    await user.click(screen.getByRole('button', { name: /adicionar informacao/i }));
+    fireEvent.change(screen.getByLabelText(/rotulo/i), { target: { value: 'Quantidade de unidades' } });
     await user.click(screen.getByLabelText(/tipo/i));
     await user.click(screen.getByRole('option', { name: /123/i }));
-    fireEvent.change(screen.getByLabelText(/^informação$/i), { target: { value: '12' } });
+    fireEvent.change(screen.getByLabelText(/^informacao$/i), { target: { value: '12' } });
     await user.click(screen.getByRole('button', { name: /salvar/i }));
 
     await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
@@ -61,7 +65,7 @@ describe('AddLeadDialog', () => {
       company: 'Acme',
       role: 'Diretora',
       source: 'LinkedIn',
-      notes: 'Lead pediu contato pela manhã.',
+      notes: 'Lead pediu contato pela manha.',
       customFields: [
         {
           label: 'Quantidade de unidades',

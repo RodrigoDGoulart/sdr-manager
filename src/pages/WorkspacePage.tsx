@@ -38,9 +38,11 @@ import {
   type Lead,
   type Workspace,
 } from "../services/api";
+import { getMissingLeadRequiredFields } from "../utils/leadRequiredFields";
 
 interface ApiError {
   error: string;
+  missingFields?: string[];
 }
 
 export default function WorkspacePage() {
@@ -58,6 +60,9 @@ export default function WorkspacePage() {
   const [addLeadFunnelId, setAddLeadFunnelId] = useState<string | null>(null);
   const [selectedLead, setSelectedLead] = useState<Lead | null>(null);
   const [editingLead, setEditingLead] = useState<Lead | null>(null);
+  const [editingRequiredFields, setEditingRequiredFields] = useState<string[]>([]);
+  const [editingHighlightedFields, setEditingHighlightedFields] = useState<string[]>([]);
+  const [pendingMoveFunnelId, setPendingMoveFunnelId] = useState<string | null>(null);
   const [editingFunnelId, setEditingFunnelId] = useState<string | null>(null);
   const [editingFunnelName, setEditingFunnelName] = useState("");
   const [draggingLead, setDraggingLead] = useState<Lead | null>(null);
@@ -79,6 +84,10 @@ export default function WorkspacePage() {
   const editingLeadPayload = useMemo(
     () => (editingLead ? getLeadPayload(editingLead) : null),
     [editingLead],
+  );
+  const addLeadRequiredFields = useMemo(
+    () => funnels.find((funnel) => funnel.id === addLeadFunnelId)?.requiredFields || [],
+    [addLeadFunnelId, funnels],
   );
 
   useEffect(() => {
@@ -141,6 +150,12 @@ export default function WorkspacePage() {
 
   async function handleCreateLead(payload: CreateLeadPayload) {
     if (!id) return;
+    const missingFields = getMissingLeadRequiredFields({ ...payload, customFields: payload.customFields || [] }, addLeadRequiredFields);
+    if (missingFields.length > 0) {
+      setCreateLeadError("Preencha os campos obrigatorios deste funil.");
+      return;
+    }
+
     setCreateLeadLoading(true);
     setCreateLeadError("");
 
@@ -172,17 +187,35 @@ export default function WorkspacePage() {
 
   async function handleUpdateLead(payload: CreateLeadPayload) {
     if (!id || !editingLead) return;
+    const missingFields = getMissingLeadRequiredFields(
+      { ...payload, customFields: payload.customFields || [] },
+      editingRequiredFields,
+    );
+    if (missingFields.length > 0) {
+      setEditingHighlightedFields(missingFields);
+      setCreateLeadError("Preencha os campos obrigatorios deste funil.");
+      return;
+    }
+
     setCreateLeadLoading(true);
     setCreateLeadError("");
 
     try {
       const res = await leadService.update(id, editingLead.id, payload);
-      setLeads((current) =>
-        current.map((lead) => (lead.id === res.data.id ? res.data : lead)),
-      );
+      let nextLead = res.data;
+
+      if (pendingMoveFunnelId && pendingMoveFunnelId !== res.data.funnelId) {
+        const moveRes = await leadService.moveToFunnel(id, res.data.id, pendingMoveFunnelId);
+        nextLead = moveRes.data;
+      }
+
+      setLeads((current) => current.map((lead) => (lead.id === nextLead.id ? nextLead : lead)));
       setEditingLead(null);
-      setSelectedLead(res.data);
-      showSuccess("Lead atualizado com sucesso.");
+      setEditingRequiredFields([]);
+      setEditingHighlightedFields([]);
+      setPendingMoveFunnelId(null);
+      setSelectedLead(nextLead);
+      showSuccess(pendingMoveFunnelId ? "Lead atualizado e movido com sucesso." : "Lead atualizado com sucesso.");
     } catch (err) {
       const axiosErr = err as AxiosError<ApiError>;
       setCreateLeadError(
@@ -249,18 +282,74 @@ export default function WorkspacePage() {
     }
   }
 
+  function getAutoMessageDestinationFunnel() {
+    const configuredFunnel = workspace?.autoMessageDestinationFunnelId
+      ? funnels.find((funnel) => funnel.id === workspace.autoMessageDestinationFunnelId)
+      : null;
+
+    return configuredFunnel || funnels.find((funnel) => funnel.name.toLowerCase() === "tentando contato") || null;
+  }
+
+  function openRequiredFieldsEditor(lead: Lead, targetFunnel: Funnel, missingFields: string[], message: string) {
+    setSelectedLead(lead);
+    setEditingLead(lead);
+    setEditingRequiredFields(targetFunnel.requiredFields);
+    setEditingHighlightedFields(missingFields);
+    setPendingMoveFunnelId(targetFunnel.id);
+    setCreateLeadError(message);
+  }
+
   async function handleSendMessage(message: string) {
     if (!id || !selectedLead) return;
+    const destinationFunnel = getAutoMessageDestinationFunnel();
+
+    if (!destinationFunnel) {
+      showError("Coluna de destino nÃ£o encontrada.");
+      return;
+    }
+
+    const missingFields = getMissingLeadRequiredFields(selectedLead, destinationFunnel.requiredFields);
+
+    if (missingFields.length > 0) {
+      openRequiredFieldsEditor(
+        selectedLead,
+        destinationFunnel,
+        missingFields,
+        "Preencha os campos obrigatorios da coluna de destino antes de enviar a mensagem.",
+      );
+      showError("Complete os campos obrigatorios para enviar a mensagem.");
+      return;
+    }
 
     try {
       const res = await leadService.sendMessage(id, selectedLead.id, message);
+      let nextLead = res.data;
+
+      if (nextLead.funnelId !== destinationFunnel.id) {
+        const moveRes = await leadService.moveToFunnel(id, nextLead.id, destinationFunnel.id);
+        nextLead = moveRes.data;
+      }
+
       setLeads((current) =>
-        current.map((lead) => (lead.id === res.data.id ? res.data : lead)),
+        current.map((lead) => (lead.id === nextLead.id ? nextLead : lead)),
       );
-      setSelectedLead(res.data);
+      setSelectedLead(nextLead);
       showSuccess("Mensagem enviada com sucesso.");
     } catch (err) {
       const axiosErr = err as AxiosError<ApiError>;
+      const responseMissingFields = axiosErr.response?.data?.missingFields || [];
+
+      if (responseMissingFields.length > 0) {
+        openRequiredFieldsEditor(
+          selectedLead,
+          destinationFunnel,
+          responseMissingFields,
+          "Preencha os campos obrigatorios da coluna de destino antes de enviar a mensagem.",
+        );
+        showError("Complete os campos obrigatorios para enviar a mensagem.");
+        return;
+      }
+
       showError(
         axiosErr.response?.data?.error ||
           "Não foi possível enviar a mensagem. Tente novamente.",
@@ -342,7 +431,7 @@ export default function WorkspacePage() {
     );
 
     try {
-      const res = await funnelService.update(id, funnel.id, nextName);
+      const res = await funnelService.update(id, funnel.id, { name: nextName });
       setFunnels((current) =>
         current.map((item) => (item.id === funnel.id ? res.data : item)),
       );
@@ -391,6 +480,22 @@ export default function WorkspacePage() {
     setDraggingLead(null);
 
     if (lead.funnelId === targetFunnelId) return;
+    const targetFunnel = funnels.find((funnel) => funnel.id === targetFunnelId);
+    const requiredFields = targetFunnel?.requiredFields || [];
+    const missingFields = getMissingLeadRequiredFields(lead, requiredFields);
+
+    if (missingFields.length > 0) {
+      if (targetFunnel) {
+        openRequiredFieldsEditor(
+          lead,
+          targetFunnel,
+          missingFields,
+          "Preencha os campos obrigatorios deste funil antes de mover o lead.",
+        );
+      }
+      showError("Complete os campos obrigatorios para mover o lead.");
+      return;
+    }
 
     const previousLeads = leads;
     setLeads((current) =>
@@ -838,12 +943,17 @@ export default function WorkspacePage() {
           setCreateLeadError("");
           if (editingLead) {
             setEditingLead(null);
+            setEditingRequiredFields([]);
+            setEditingHighlightedFields([]);
+            setPendingMoveFunnelId(null);
           } else {
             setAddLeadOpen(false);
             setAddLeadFunnelId(null);
           }
         }}
         onSubmit={editingLead ? handleUpdateLead : handleCreateLead}
+        requiredFields={editingLead ? editingRequiredFields : addLeadRequiredFields}
+        highlightedFields={editingLead ? editingHighlightedFields : []}
       />
       <ViewLeadDialog
         open={Boolean(selectedLead) && !editingLead && !deleteConfirmOpen}
@@ -853,7 +963,13 @@ export default function WorkspacePage() {
         llmConfigured={llmConfigured}
         onClose={() => setSelectedLead(null)}
         onEdit={() => {
-          if (selectedLead) setEditingLead(selectedLead);
+          if (selectedLead) {
+            const currentFunnel = funnels.find((funnel) => funnel.id === selectedLead.funnelId);
+            setEditingLead(selectedLead);
+            setEditingRequiredFields(currentFunnel?.requiredFields || []);
+            setEditingHighlightedFields([]);
+            setPendingMoveFunnelId(null);
+          }
         }}
         onDelete={() => {
           setDeleteLeadError("");

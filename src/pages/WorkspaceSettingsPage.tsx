@@ -1,9 +1,14 @@
-import { useEffect, useState } from 'react';
+import { memo, useEffect, useState } from 'react';
 import {
   Alert,
+  Accordion,
+  AccordionDetails,
+  AccordionSummary,
   Box,
   Button,
+  Checkbox,
   CircularProgress,
+  FormControlLabel,
   FormControl,
   InputLabel,
   Link,
@@ -16,6 +21,8 @@ import {
 } from '@mui/material';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import ErrorIcon from '@mui/icons-material/Error';
+import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
+import AddIcon from '@mui/icons-material/Add';
 import KeyIcon from '@mui/icons-material/Key';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import SaveIcon from '@mui/icons-material/Save';
@@ -31,10 +38,60 @@ import {
   type Workspace,
   type WorkspaceLlmSettings,
 } from '../services/api';
+import { nativeLeadRequiredFieldOptions } from '../utils/leadRequiredFields';
 
 interface ApiError {
   error: string;
 }
+
+interface CustomRequiredFieldRowProps {
+  field: string;
+  index: number;
+  onCommit: (index: number, value: string) => void;
+  onRemove: (index: number) => void;
+}
+
+const CustomRequiredFieldRow = memo(function CustomRequiredFieldRow({
+  field,
+  index,
+  onCommit,
+  onRemove,
+}: CustomRequiredFieldRowProps) {
+  const [value, setValue] = useState(field);
+
+  useEffect(() => {
+    setValue(field);
+  }, [field]);
+
+  function commitValue() {
+    if (value !== field) onCommit(index, value);
+  }
+
+  return (
+    <Stack direction="row" spacing={1} alignItems="flex-start" sx={{ width: '100%' }}>
+      <Checkbox
+        checked
+        aria-label={`Remover campo customizado obrigatorio ${value || index + 1}`}
+        onChange={(event) => {
+          if (!event.target.checked) onRemove(index);
+        }}
+        sx={{ mt: 0.25 }}
+      />
+      <TextField
+        value={value}
+        onChange={(event) => setValue(event.target.value)}
+        onBlur={commitValue}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter') {
+            event.currentTarget.blur();
+          }
+        }}
+        size="small"
+        fullWidth
+      />
+    </Stack>
+  );
+});
 
 export default function WorkspaceSettingsPage() {
   const { id } = useParams<{ id: string }>();
@@ -50,7 +107,9 @@ export default function WorkspaceSettingsPage() {
   const [testing, setTesting] = useState(false);
   const [saving, setSaving] = useState(false);
   const [savingDestination, setSavingDestination] = useState(false);
+  const [savingRequiredFunnelId, setSavingRequiredFunnelId] = useState('');
   const [destinationError, setDestinationError] = useState('');
+  const [requiredFieldsError, setRequiredFieldsError] = useState('');
   const [tokenStatus, setTokenStatus] = useState<'idle' | 'valid' | 'invalid'>('idle');
   const [statusMessage, setStatusMessage] = useState('');
   const [toast, setToast] = useState('');
@@ -169,6 +228,82 @@ export default function WorkspaceSettingsPage() {
       setDestinationError(axiosErr.response?.data?.error || 'Não foi possível salvar a coluna de destino.');
     } finally {
       setSavingDestination(false);
+    }
+  }
+
+  function updateFunnelRequiredFields(funnelId: string, requiredFields: string[]) {
+    setFunnels((current) =>
+      current.map((funnel) =>
+        funnel.id === funnelId
+          ? {
+              ...funnel,
+              requiredFields,
+            }
+          : funnel,
+      ),
+    );
+    setRequiredFieldsError('');
+  }
+
+  function toggleRequiredField(funnel: Funnel, field: string, checked: boolean) {
+    const currentFields = funnel.requiredFields || [];
+    const nextFields = checked
+      ? [...currentFields, field]
+      : currentFields.filter((currentField) => currentField !== field);
+
+    updateFunnelRequiredFields(funnel.id, Array.from(new Set(nextFields)));
+  }
+
+  function addCustomRequiredField(funnel: Funnel) {
+    const baseLabel = 'Campo customizado';
+    const existingLabels = new Set(funnel.requiredFields.map((field) => field.toLowerCase()));
+    let nextLabel = baseLabel;
+    let suffix = 2;
+
+    while (existingLabels.has(nextLabel.toLowerCase())) {
+      nextLabel = `${baseLabel} ${suffix}`;
+      suffix += 1;
+    }
+
+    updateFunnelRequiredFields(funnel.id, [...funnel.requiredFields, nextLabel]);
+  }
+
+  function removeRequiredFieldAtIndex(funnel: Funnel, fieldIndex: number) {
+    updateFunnelRequiredFields(
+      funnel.id,
+      funnel.requiredFields.filter((_, index) => index !== fieldIndex),
+    );
+  }
+
+  function updateCustomRequiredField(funnel: Funnel, fieldIndex: number, nextLabel: string) {
+    updateFunnelRequiredFields(
+      funnel.id,
+      funnel.requiredFields.map((field, index) => (index === fieldIndex ? nextLabel : field)),
+    );
+  }
+
+  async function handleSaveRequiredFields(funnel: Funnel) {
+    if (!id) return;
+
+    const normalizedFields = funnel.requiredFields.map((field) => field.trim()).filter(Boolean);
+
+    if (normalizedFields.length !== new Set(normalizedFields.map((field) => field.toLowerCase())).size) {
+      setRequiredFieldsError('Remova campos obrigatorios duplicados antes de salvar.');
+      return;
+    }
+
+    setSavingRequiredFunnelId(funnel.id);
+    setRequiredFieldsError('');
+
+    try {
+      const res = await funnelService.update(id, funnel.id, { requiredFields: normalizedFields });
+      setFunnels((current) => current.map((item) => (item.id === funnel.id ? res.data : item)));
+      setToast('Campos obrigatorios salvos com sucesso.');
+    } catch (err) {
+      const axiosErr = err as AxiosError<ApiError>;
+      setRequiredFieldsError(axiosErr.response?.data?.error || 'Nao foi possivel salvar os campos obrigatorios.');
+    } finally {
+      setSavingRequiredFunnelId('');
     }
   }
 
@@ -361,6 +496,111 @@ export default function WorkspaceSettingsPage() {
                       {destinationError}
                     </Alert>
                   )}
+                </Stack>
+              </Box>
+
+              <Box
+                sx={{
+                  bgcolor: 'background.paper',
+                  border: 1,
+                  borderColor: 'divider',
+                  borderRadius: 1,
+                  p: { xs: 2, sm: 3 },
+                }}
+              >
+                <Stack spacing={2}>
+                  <Box>
+                    <Typography variant="h6" sx={{ fontWeight: 700 }}>
+                      Campos obrigatorios por funil
+                    </Typography>
+                    <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+                      Configure quais informacoes precisam existir antes de criar ou mover um lead para cada coluna.
+                    </Typography>
+                  </Box>
+
+                  <Stack spacing={1}>
+                    {funnels.map((funnel) => {
+                      const nativeKeys = new Set<string>(nativeLeadRequiredFieldOptions.map((field) => field.key));
+                      const customRequiredFields = funnel.requiredFields
+                        .map((field, index) => ({ field, index }))
+                        .filter(({ field }) => !nativeKeys.has(field));
+
+                      return (
+                        <Accordion key={funnel.id} disableGutters variant="outlined" sx={{ boxShadow: 'none' }}>
+                          <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+                            <Stack direction="row" alignItems="center" justifyContent="space-between" gap={2} sx={{ width: '100%', pr: 1 }}>
+                              <Typography sx={{ fontWeight: 700 }}>{funnel.name}</Typography>
+                              <Typography variant="caption" color="text.secondary">
+                                {funnel.requiredFields.length} obrigatorio(s)
+                              </Typography>
+                            </Stack>
+                          </AccordionSummary>
+                          <AccordionDetails>
+                            <Stack spacing={2}>
+                              <Box
+                                sx={{
+                                  display: 'grid',
+                                  gridTemplateColumns: { xs: '1fr', sm: '1fr 1fr' },
+                                  gap: 0.5,
+                                }}
+                              >
+                                {nativeLeadRequiredFieldOptions.map((field) => (
+                                  <FormControlLabel
+                                    key={field.key}
+                                    control={
+                                      <Checkbox
+                                        checked={funnel.requiredFields.includes(field.key)}
+                                        onChange={(event) => toggleRequiredField(funnel, field.key, event.target.checked)}
+                                      />
+                                    }
+                                    label={field.label}
+                                  />
+                                ))}
+                              </Box>
+
+                              <Stack spacing={1}>
+                                {customRequiredFields.map(({ field, index }) => (
+                                  <CustomRequiredFieldRow
+                                    key={`${funnel.id}-custom-${index}`}
+                                    field={field}
+                                    index={index}
+                                    onCommit={(fieldIndex, value) => updateCustomRequiredField(funnel, fieldIndex, value)}
+                                    onRemove={(fieldIndex) => removeRequiredFieldAtIndex(funnel, fieldIndex)}
+                                  />
+                                ))}
+                              </Stack>
+
+                              <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5} alignItems={{ sm: 'center' }}>
+                                <Button
+                                  variant="outlined"
+                                  startIcon={<AddIcon />}
+                                  onClick={() => addCustomRequiredField(funnel)}
+                                >
+                                  Campo customizado
+                                </Button>
+                                <Button
+                                  variant="contained"
+                                  startIcon={
+                                    savingRequiredFunnelId === funnel.id ? (
+                                      <CircularProgress size={16} color="inherit" />
+                                    ) : (
+                                      <SaveIcon />
+                                    )
+                                  }
+                                  onClick={() => handleSaveRequiredFields(funnel)}
+                                  disabled={savingRequiredFunnelId === funnel.id}
+                                >
+                                  Salvar funil
+                                </Button>
+                              </Stack>
+                            </Stack>
+                          </AccordionDetails>
+                        </Accordion>
+                      );
+                    })}
+                  </Stack>
+
+                  {requiredFieldsError && <Alert severity="error">{requiredFieldsError}</Alert>}
                 </Stack>
               </Box>
             </Stack>

@@ -61,8 +61,16 @@ const defaultFunnels = [
   'reunião agendada',
 ];
 
+const nativeRequiredLeadFields = ['name', 'phone', 'email', 'source', 'notes'] as const;
+const nativeRequiredLeadFieldSet = new Set<string>(nativeRequiredLeadFields);
+
+const requiredFieldsSchema = z.array(z.string().trim().min(1)).default([]);
+
 const funnelSchema = z.object({
-  name: z.string().trim().min(1),
+  name: z.string().trim().min(1).optional(),
+  requiredFields: requiredFieldsSchema.optional(),
+}).refine((value) => value.name || value.requiredFields, {
+  message: 'Provide at least name or requiredFields',
 });
 
 const campaignSchema = z.object({
@@ -105,18 +113,19 @@ const customLeadFieldSchema = z.object({
 
 const leadSchema = z.object({
   funnelId: z.uuid().optional(),
-  name: z.string().trim().min(1),
-  email: z.string().trim().min(1),
-  phone: z.string().trim().min(1),
-  company: z.string().trim().min(1),
-  role: z.string().trim().min(1),
-  source: z.string().trim().min(1),
-  notes: z.string().trim().min(1),
+  name: z.string().trim().default(''),
+  email: z.string().trim().default(''),
+  phone: z.string().trim().default(''),
+  company: z.string().trim().default(''),
+  role: z.string().trim().default(''),
+  source: z.string().trim().default(''),
+  notes: z.string().trim().default(''),
   customFields: z.array(customLeadFieldSchema).default([]),
 });
 
 const workspaceSelect = 'id,name,created_at,owner_id,auto_message_destination_funnel_id';
 const leadSelect = 'id,workspace_id,funnel_id,name,email,phone,company,role,source,notes,custom_fields,generated_messages,notification,created_at';
+const funnelSelect = 'id,workspace_id,name,sort_order,required_fields,created_at';
 const leadMessagePrompt = `Voce e um assistente de SDR especializado em criar mensagens comerciais personalizadas para leads.
 
 Sua tarefa e gerar exatamente 3 sugestoes de mensagens para abordagem comercial, considerando:
@@ -474,6 +483,70 @@ async function getCampaignUsingTrigger(
   return data;
 }
 
+function normalizeRequiredFields(requiredFields: unknown) {
+  if (!Array.isArray(requiredFields)) return [];
+
+  const seen = new Set<string>();
+  const normalized: string[] = [];
+
+  for (const field of requiredFields) {
+    const value = String(field || '').trim();
+    const key = value.toLowerCase();
+    if (!value || seen.has(key)) continue;
+    seen.add(key);
+    normalized.push(value);
+  }
+
+  return normalized;
+}
+
+function getMissingRequiredLeadFields(
+  lead: {
+    name?: unknown;
+    phone?: unknown;
+    email?: unknown;
+    source?: unknown;
+    notes?: unknown;
+    customFields?: unknown;
+    custom_fields?: unknown;
+  },
+  requiredFields: unknown,
+) {
+  const missing: string[] = [];
+  const customFields = Array.isArray(lead.customFields)
+    ? lead.customFields
+    : Array.isArray(lead.custom_fields)
+      ? lead.custom_fields
+      : [];
+
+  for (const field of normalizeRequiredFields(requiredFields)) {
+    if (nativeRequiredLeadFieldSet.has(field)) {
+      const value = (lead as Record<string, unknown>)[field];
+      if (!stringifyPromptValue(value)) missing.push(field);
+      continue;
+    }
+
+    const hasCustomField = customFields.some((customField) => {
+      if (!customField || typeof customField !== 'object') return false;
+      const item = customField as { label?: unknown; value?: unknown };
+      return item.label
+        && stringifyPromptValue(item.label).toLowerCase() === field.toLowerCase()
+        && Boolean(stringifyPromptValue(item.value));
+    });
+
+    if (!hasCustomField) missing.push(field);
+  }
+
+  return missing;
+}
+
+function requiredFieldsErrorResponse(missingFields: string[]) {
+  return jsonResponse({
+    error: 'Preencha os campos obrigatorios deste funil.',
+    missingFields,
+  }, 400);
+}
+
 function env(name: string) {
   const value = Deno.env.get(name);
   if (!value) throw new Error(`Missing ${name}`);
@@ -730,7 +803,7 @@ Deno.serve(async (req) => {
 
           const { data: destinationFunnel, error: destinationFunnelError } = await supabase
             .from('funnels')
-            .select('id')
+            .select('id,required_fields')
             .eq('workspace_id', data.id)
             .eq('name', 'Tentando contato')
             .maybeSingle();
@@ -925,7 +998,7 @@ Deno.serve(async (req) => {
         if (req.method === 'GET') {
           const { data, error } = await supabase
             .from('funnels')
-            .select('id,workspace_id,name,sort_order,created_at')
+            .select(funnelSelect)
             .eq('workspace_id', workspaceId)
             .order('sort_order', { ascending: true })
             .order('created_at', { ascending: true });
@@ -951,10 +1024,10 @@ Deno.serve(async (req) => {
             .from('funnels')
             .insert({
               workspace_id: workspaceId,
-              name,
+              name: name || 'Novo funil',
               sort_order: (lastFunnel?.sort_order ?? -1) + 1,
             })
-            .select('id,workspace_id,name,sort_order,created_at')
+            .select(funnelSelect)
             .single();
 
           if (error) return jsonResponse({ error: error.message }, 400);
@@ -980,7 +1053,7 @@ Deno.serve(async (req) => {
 
         const { data: funnel, error: funnelError } = await supabase
           .from('funnels')
-          .select('id')
+          .select('id,required_fields')
           .eq('id', funnelId)
           .eq('workspace_id', workspaceId)
           .maybeSingle();
@@ -989,13 +1062,17 @@ Deno.serve(async (req) => {
         if (!funnel) return jsonResponse({ error: 'Funil não encontrado' }, 404);
 
         if (req.method === 'PUT') {
-          const { name } = funnelSchema.parse(await readJson(req));
+          const payload = funnelSchema.parse(await readJson(req));
+          const updatePayload: Json = {};
+          if (payload.name) updatePayload.name = payload.name;
+          if (payload.requiredFields) updatePayload.required_fields = normalizeRequiredFields(payload.requiredFields);
+
           const { data, error } = await adminClient
             .from('funnels')
-            .update({ name })
+            .update(updatePayload)
             .eq('id', funnelId)
             .eq('workspace_id', workspaceId)
-            .select('id,workspace_id,name,sort_order,created_at')
+            .select(funnelSelect)
             .maybeSingle();
 
           if (error) return jsonResponse({ error: error.message }, 400);
@@ -1214,7 +1291,7 @@ Deno.serve(async (req) => {
           const lead = leadSchema.parse(await readJson(req));
           const funnelQuery = supabase
             .from('funnels')
-            .select('id')
+            .select('id,required_fields')
             .eq('workspace_id', workspaceId);
 
           const { data: targetFunnel, error: targetFunnelError } = await (
@@ -1225,6 +1302,11 @@ Deno.serve(async (req) => {
             .maybeSingle();
 
           if (targetFunnelError) return jsonResponse({ error: targetFunnelError.message }, 400);
+          if (!targetFunnel) return jsonResponse({ error: 'Funil nÃ£o encontrado' }, 404);
+
+          const missingFields = getMissingRequiredLeadFields(lead, targetFunnel.required_fields);
+          if (missingFields.length > 0) return requiredFieldsErrorResponse(missingFields);
+
           const triggerCampaign = targetFunnel
             ? await getTriggerCampaign(supabase, workspaceId, targetFunnel.id)
             : null;
@@ -1293,6 +1375,29 @@ Deno.serve(async (req) => {
 
         if (req.method === 'PUT') {
           const lead = leadSchema.parse(await readJson(req));
+          const { data: existingLead, error: existingLeadError } = await supabase
+            .from('leads')
+            .select('id,funnel_id')
+            .eq('id', leadId)
+            .eq('workspace_id', workspaceId)
+            .maybeSingle();
+
+          if (existingLeadError) return jsonResponse({ error: existingLeadError.message }, 400);
+          if (!existingLead) return jsonResponse({ error: 'Lead nÃ£o encontrado' }, 404);
+
+          const { data: currentFunnel, error: currentFunnelError } = await supabase
+            .from('funnels')
+            .select('id,required_fields')
+            .eq('id', existingLead.funnel_id)
+            .eq('workspace_id', workspaceId)
+            .maybeSingle();
+
+          if (currentFunnelError) return jsonResponse({ error: currentFunnelError.message }, 400);
+          if (currentFunnel) {
+            const missingFields = getMissingRequiredLeadFields(lead, currentFunnel.required_fields);
+            if (missingFields.length > 0) return requiredFieldsErrorResponse(missingFields);
+          }
+
           const { data, error } = await adminClient
             .from('leads')
             .update({
@@ -1350,7 +1455,7 @@ Deno.serve(async (req) => {
 
         const { data: funnel, error: funnelError } = await supabase
           .from('funnels')
-          .select('id')
+          .select('id,required_fields')
           .eq('id', funnelId)
           .eq('workspace_id', workspaceId)
           .maybeSingle();
@@ -1367,6 +1472,9 @@ Deno.serve(async (req) => {
 
         if (existingLeadError) return jsonResponse({ error: existingLeadError.message }, 400);
         if (!existingLead) return jsonResponse({ error: 'Lead nÃ£o encontrado' }, 404);
+
+        const missingFields = getMissingRequiredLeadFields(existingLead, funnel.required_fields);
+        if (missingFields.length > 0) return requiredFieldsErrorResponse(missingFields);
 
         const triggerCampaign = await getTriggerCampaign(supabase, workspaceId, funnelId);
         const llmSetting = triggerCampaign
@@ -1473,7 +1581,7 @@ Deno.serve(async (req) => {
 
         const { data: lead, error: leadError } = await supabase
           .from('leads')
-          .select('id')
+          .select('id,name,email,phone,company,role,source,notes,custom_fields')
           .eq('id', leadId)
           .eq('workspace_id', workspaceId)
           .maybeSingle();
@@ -1482,34 +1590,43 @@ Deno.serve(async (req) => {
         if (!lead) return jsonResponse({ error: 'Lead não encontrado' }, 404);
 
         let destinationFunnelId = workspace.auto_message_destination_funnel_id as string | null;
+        let destinationFunnel: { id: string; required_fields?: unknown } | null = null;
 
         if (destinationFunnelId) {
           const { data: configuredFunnel, error: configuredFunnelError } = await supabase
             .from('funnels')
-            .select('id')
+            .select('id,required_fields')
             .eq('id', destinationFunnelId)
             .eq('workspace_id', workspaceId)
             .maybeSingle();
 
           if (configuredFunnelError) return jsonResponse({ error: configuredFunnelError.message }, 400);
-          if (!configuredFunnel) destinationFunnelId = null;
+          if (configuredFunnel) {
+            destinationFunnel = configuredFunnel;
+          } else {
+            destinationFunnelId = null;
+          }
         }
 
-        if (!destinationFunnelId) {
+        if (!destinationFunnelId || !destinationFunnel) {
           const { data: defaultFunnel, error: defaultFunnelError } = await supabase
             .from('funnels')
-            .select('id')
+            .select('id,required_fields')
             .eq('workspace_id', workspaceId)
             .eq('name', 'Tentando contato')
             .maybeSingle();
 
           if (defaultFunnelError) return jsonResponse({ error: defaultFunnelError.message }, 400);
           destinationFunnelId = defaultFunnel?.id || null;
+          destinationFunnel = defaultFunnel || null;
         }
 
-        if (!destinationFunnelId) {
+        if (!destinationFunnelId || !destinationFunnel) {
           return jsonResponse({ error: 'Coluna de destino não encontrada' }, 404);
         }
+
+        const missingFields = getMissingRequiredLeadFields(lead, destinationFunnel.required_fields);
+        if (missingFields.length > 0) return requiredFieldsErrorResponse(missingFields);
 
         const { data, error } = await adminClient
           .from('leads')

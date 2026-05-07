@@ -71,6 +71,7 @@ export interface Funnel {
   workspaceId: string;
   name: string;
   sortOrder: number;
+  requiredFields: string[];
   createdAt: string;
 }
 
@@ -152,6 +153,7 @@ interface SupabaseFunnel {
   workspace_id: string;
   name: string;
   sort_order: number;
+  required_fields: string[] | null;
   created_at: string;
 }
 
@@ -235,6 +237,7 @@ function mapFunnel(data: SupabaseFunnel): Funnel {
     workspaceId: data.workspace_id,
     name: data.name,
     sortOrder: data.sort_order,
+    requiredFields: Array.isArray(data.required_fields) ? data.required_fields : [],
     createdAt: data.created_at,
   };
 }
@@ -384,9 +387,9 @@ export const funnelService = {
       .post<SupabaseFunnel>(`/workspace/${workspaceId}/funnels`, { name })
       .then((res) => ({ ...res, data: mapFunnel(res.data) })),
 
-  update: (workspaceId: string, funnelId: string, name: string) =>
+  update: (workspaceId: string, funnelId: string, data: { name?: string; requiredFields?: string[] }) =>
     api
-      .put<SupabaseFunnel>(`/workspace/${workspaceId}/funnels/${funnelId}`, { name })
+      .put<SupabaseFunnel>(`/workspace/${workspaceId}/funnels/${funnelId}`, data)
       .then((res) => ({ ...res, data: mapFunnel(res.data) })),
 
   remove: (workspaceId: string, funnelId: string) => api.delete<OkResponse>(`/workspace/${workspaceId}/funnels/${funnelId}`),
